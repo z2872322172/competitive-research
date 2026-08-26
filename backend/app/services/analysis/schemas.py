@@ -8,7 +8,9 @@ ClaimStatusValue = Literal["verified", "low_confidence", "undisclosed", "needs_e
 
 
 class ExtractedClaim(BaseModel):
-    evidence_id: str
+    # 证据 ID 为数据库自增整型；LLM 可能把整型回显为字符串，统一在校验前转回 int。
+    # 无法解析的值（如幻觉出的旧格式 ID）映射为 -1，不会命中任何真实证据，后续按"不存在的 evidence_id"过滤。
+    evidence_id: int
     subject: str = Field(min_length=1, max_length=160)
     predicate: str = Field(min_length=1, max_length=120)
     value: dict[str, Any] = Field(default_factory=dict)
@@ -19,6 +21,18 @@ class ExtractedClaim(BaseModel):
     confidence_score: float = Field(default=0.6, ge=0, le=1)
     display_text: str = Field(min_length=8)
     relation: Literal["supports", "context"] = "supports"
+
+    @field_validator("evidence_id", mode="before")
+    @classmethod
+    def coerce_evidence_id(cls, value: Any) -> Any:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, int):
+            return value
+        try:
+            return int(str(value).strip())
+        except (TypeError, ValueError):
+            return -1
 
     @field_validator("predicate")
     @classmethod
@@ -40,7 +54,7 @@ CLAIM_EXTRACTION_JSON_SCHEMA = {
                 "type": "object",
                 "additionalProperties": False,
                 "properties": {
-                    "evidence_id": {"type": "string"},
+                    "evidence_id": {"type": "integer"},
                     "subject": {"type": "string"},
                     "predicate": {"type": "string"},
                     "value": {"type": "object", "additionalProperties": True},

@@ -376,7 +376,7 @@ def test_stage_seven_source_snapshot_reports_unavailable_without_file(monkeypatc
             db.close()
 
         response = client.get(f"/v1/sources/{source_id}/snapshot")
-        missing_source = client.get("/v1/sources/src_unknown/snapshot")
+        missing_source = client.get("/v1/sources/999999/snapshot")
 
         assert response.status_code == 200
         body = response.json()
@@ -413,7 +413,7 @@ def test_stage_six_demo_sources_persist_snapshots_in_artifact_storage(monkeypatc
             assert snapshot["char_count"] > 0
             assert snapshot["summary"]
 
-        snapshot_dir = tmp_path / "snapshots" / task["id"]
+        snapshot_dir = tmp_path / "snapshots" / str(task["id"])
         assert snapshot_dir.exists()
         assert list(snapshot_dir.glob("*.html"))
 
@@ -450,7 +450,7 @@ def test_stage_six_source_snapshot_raw_returns_file_bytes(monkeypatch, tmp_path)
         assert response.headers["x-artifact-size"] == str(len(body))
         assert hashlib.sha256(body).hexdigest() == response.headers["x-artifact-sha256"]
 
-        stored_file = tmp_path / "snapshots" / task["id"] / f"{source['id']}.html"
+        stored_file = tmp_path / "snapshots" / str(task["id"]) / f"{source['id']}.html"
         assert stored_file.read_bytes() == body
 
     get_settings.cache_clear()
@@ -505,7 +505,7 @@ def test_stage_six_source_snapshot_raw_error_semantics(monkeypatch, tmp_path):
         finally:
             db.close()
 
-        unknown = client.get("/v1/sources/src_unknown/snapshot/raw")
+        unknown = client.get("/v1/sources/999999/snapshot/raw")
         no_artifact = client.get(f"/v1/sources/{no_artifact_id}/snapshot/raw")
         missing_file = client.get(f"/v1/sources/{missing_file_id}/snapshot/raw")
 

@@ -22,13 +22,13 @@ class ResearchTaskCreate(BaseModel):
 
 
 class ResearchTaskOut(BaseModel):
-    id: str
+    id: int
     title: str
     prompt: str
     scope: dict[str, Any]
     status: str
     workspace_id: str
-    current_run_id: str | None
+    current_run_id: int | None
     failure_reason: str | None
     created_by: str
     confirmed_at: datetime | None
@@ -41,8 +41,8 @@ class ResearchTaskOut(BaseModel):
 
 
 class TaskRunOut(BaseModel):
-    id: str
-    task_id: str
+    id: int
+    task_id: int
     status: str
     current_stage: str
     iteration_count: int
@@ -57,8 +57,8 @@ class TaskRunOut(BaseModel):
 
 
 class ResearchEventOut(BaseModel):
-    id: str
-    run_id: str
+    id: int
+    run_id: int
     sequence_no: int
     type: str
     stage: str
@@ -70,8 +70,8 @@ class ResearchEventOut(BaseModel):
 
 
 class SourceOut(BaseModel):
-    id: str
-    task_id: str
+    id: int
+    task_id: int
     url: str
     canonical_url: str
     source_type: str
@@ -91,7 +91,7 @@ class SourceOut(BaseModel):
 
 
 class SourceSnapshotOut(BaseModel):
-    source_id: str
+    source_id: int
     artifact_type: str
     available: bool
     content_hash: str | None
@@ -106,6 +106,39 @@ class CompetitorSourceUrl(BaseModel):
     source_type: str = "official"
 
 
+class AuthRegisterIn(BaseModel):
+    username: str = Field(min_length=3, max_length=80, pattern=r"^[a-zA-Z0-9_\-\.]+$")
+    password: str = Field(min_length=8, max_length=128)
+    display_name: str = Field(default="", max_length=80)
+    # 注册时加入的工作区；不传则默认分配 "{username}-default" 个人工作区（首个成员为 owner）。
+    workspace_id: str | None = Field(default=None, max_length=40)
+
+
+class AuthLoginIn(BaseModel):
+    username: str = Field(min_length=1, max_length=80)
+    password: str = Field(min_length=1, max_length=128)
+
+
+class WorkspaceMembershipOut(BaseModel):
+    workspace_id: str
+    role: str
+
+
+class AuthUserOut(BaseModel):
+    id: int
+    username: str
+    display_name: str
+    is_active: bool
+    workspaces: list[WorkspaceMembershipOut]
+
+
+class AuthTokenOut(BaseModel):
+    token: str
+    token_type: str = "bearer"
+    expires_in: int
+    user: AuthUserOut
+
+
 class CompetitorProfileCreate(BaseModel):
     name: str = Field(min_length=1)
     category: str = "general"
@@ -116,7 +149,7 @@ class CompetitorProfileCreate(BaseModel):
 
 
 class CompetitorProfileOut(BaseModel):
-    id: str
+    id: int
     workspace_id: str
     name: str
     category: str
@@ -133,8 +166,8 @@ class CompetitorProfileOut(BaseModel):
 
 
 class EvidenceOut(BaseModel):
-    id: str
-    source_id: str
+    id: int
+    source_id: int
     quote: str
     locator: dict[str, Any]
     social_metadata: dict[str, Any] = Field(default_factory=dict)
@@ -147,8 +180,8 @@ class EvidenceOut(BaseModel):
 
 
 class ClaimOut(BaseModel):
-    id: str
-    task_id: str
+    id: int
+    task_id: int
     subject: str
     predicate: str
     value: dict[str, Any]
@@ -160,7 +193,7 @@ class ClaimOut(BaseModel):
     display_text: str
     include_in_report: bool
     evidence_coverage: float
-    evidence_ids: list[str] = Field(default_factory=list)
+    evidence_ids: list[int] = Field(default_factory=list)
     review_decision: str | None = None
     review_reason: str | None = None
     reviewed_at: datetime | None = None
@@ -176,8 +209,8 @@ class CancelTaskCreate(BaseModel):
 
 
 class ReviewDecisionOut(BaseModel):
-    id: str
-    claim_id: str
+    id: int
+    claim_id: int
     decision: str
     reason: str
     previous_status: str | None
@@ -189,19 +222,19 @@ class ReviewDecisionOut(BaseModel):
 
 
 class ReportSectionEvidenceOut(BaseModel):
-    id: str
-    source_id: str
+    id: int
+    source_id: int
     quote: str
     source_title: str | None = None
     source_url: str | None = None
     publisher: str | None = None
     quality_score: float
     relation: str | None = None
-    claim_ids: list[str] = Field(default_factory=list)
+    claim_ids: list[int] = Field(default_factory=list)
 
 
 class ReportSectionOut(BaseModel):
-    id: str
+    id: int
     section_type: str
     title: str
     content_markdown: str
@@ -212,8 +245,8 @@ class ReportSectionOut(BaseModel):
 
 
 class ReportOut(BaseModel):
-    id: str
-    task_id: str
+    id: int
+    task_id: int
     version: int
     status: str
     citation_coverage: float
@@ -258,7 +291,7 @@ class MonitoringMetricsOut(BaseModel):
 
 
 class SearchIndexRebuildOut(BaseModel):
-    task_id: str
+    task_id: int
     sources_indexed: int
     evidence_indexed: int
     failed_sources: int
@@ -266,11 +299,11 @@ class SearchIndexRebuildOut(BaseModel):
 
 
 class SearchHitOut(BaseModel):
-    id: str
+    id: int
     kind: str
     score: float
-    task_id: str
-    source_id: str | None
+    task_id: int
+    source_id: int | None
     title: str
     snippet: str
     source_type: str | None

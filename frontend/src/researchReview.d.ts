@@ -2,7 +2,7 @@ import type { ClaimOut } from './api'
 import type { EvidenceViewModel } from './researchEvidence'
 
 export type ReviewEvidenceSummary = {
-  id: string
+  id: number
   label: string
 }
 
@@ -26,7 +26,7 @@ export type ClaimQualityJudgement = ClaimQualitySnapshot & {
 }
 
 export type ReviewItemViewModel = {
-  claimId?: string
+  claimId?: number
   title: string
   kind: string
   summary: string
@@ -44,14 +44,14 @@ export type ReviewItemViewModel = {
 }
 
 export type LowRiskReviewCandidate = {
-  claimId: string
+  claimId: number
   title: string
   reason: string
 }
 
 export function buildReviewItems(claims: ClaimOut[], evidences: EvidenceViewModel[]): ReviewItemViewModel[]
 
-export function selectReviewItem<T extends { claimId?: string | null }>(items: T[], claimId?: string): T | null
+export function selectReviewItem<T extends { claimId?: number | null }>(items: T[], claimId?: number): T | null
 
 export function resolveReviewReason(item: Pick<ReviewItemViewModel, 'recommendation'>, typedReason?: string): string
 

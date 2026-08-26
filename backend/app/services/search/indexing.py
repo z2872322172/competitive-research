@@ -47,7 +47,7 @@ class ElasticsearchIndexer:
             db.commit()
             return SearchIndexSyncSummary(sources_indexed=0, evidence_indexed=0, failed_sources=1)
 
-    def rebuild_task(self, db: Session, task_id: str) -> SearchIndexSyncSummary:
+    def rebuild_task(self, db: Session, task_id: int) -> SearchIndexSyncSummary:
         task = db.get(models.ResearchTask, task_id)
         scope = decode_scope(task.scope_json if task else None)
         sources = (

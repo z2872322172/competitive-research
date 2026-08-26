@@ -43,7 +43,7 @@ def extract_and_store_claims(db: Session, *, task: models.ResearchTask, settings
     return ClaimExtractionResult(claims=stored_claims)
 
 
-def load_task_evidence(db: Session, task_id: str, *, limit: int) -> list[models.Evidence]:
+def load_task_evidence(db: Session, task_id: int, *, limit: int) -> list[models.Evidence]:
     return (
         db.execute(
             select(models.Evidence)
@@ -96,7 +96,7 @@ def rule_based_extract_claims(*, task: models.ResearchTask, evidence_items: list
     return ClaimExtractionResult(claims=claims)
 
 
-def store_claim(db: Session, *, task_id: str, claim: ExtractedClaim) -> bool:
+def store_claim(db: Session, *, task_id: int, claim: ExtractedClaim) -> bool:
     existing = db.execute(
         select(models.Claim.id).where(
             models.Claim.task_id == task_id,

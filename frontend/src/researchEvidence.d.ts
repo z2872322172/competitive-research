@@ -1,8 +1,8 @@
 import type { EvidenceOut, SourceSnapshotOut } from './api'
 
 export type EvidenceViewModel = {
-  id: string
-  sourceId: string
+  id: number
+  sourceId: number
   sourceType: string
   type: '官方' | '文档' | '新闻' | '社区' | '上传'
   title: string
@@ -21,8 +21,8 @@ export type EvidenceViewModel = {
   snapshotHint: string
   competitors?: string[]
   dimensions?: string[]
-  claimTags?: { id: string; label: string }[]
-  boundClaims?: { id: string; label: string; title: string; status: string }[]
+  claimTags?: { id: number | string; label: string }[]
+  boundClaims?: { id: number | string; label: string; title: string; status: string }[]
   qualityTone?: 'high' | 'medium' | 'low'
   wallMeta?: string
 }
@@ -55,7 +55,7 @@ export function buildEvidenceTraceState(
 export function buildEvidenceWallItems(
   items: EvidenceViewModel[],
   claims?: Array<{
-    id?: string
+    id?: number | string
     subject?: string
     target?: string
     dimension?: string
@@ -64,8 +64,8 @@ export function buildEvidenceWallItems(
     title?: string
     predicate?: string
     status?: string
-    evidence_ids?: string[]
-    evidence?: string[]
+    evidence_ids?: number[]
+    evidence?: number[]
   }>,
 ): EvidenceViewModel[]
 

@@ -138,7 +138,8 @@ def repair_claim(item: dict[str, Any]) -> dict[str, Any]:
     )
 
     return {
-        "evidence_id": str(item.get("evidence_id", "")).strip(),
+        # 证据 ID 为自增整型：直接透传（int 或可转 int 的字符串都交给 schema 校验器统一处理）
+        "evidence_id": item.get("evidence_id"),
         "subject": str(item.get("subject", "")).strip(),
         "predicate": str(item.get("predicate", "states_fact")).strip() or "states_fact",
         "value": item.get("value") if isinstance(item.get("value"), dict) else {},

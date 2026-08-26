@@ -62,7 +62,7 @@ class ParsedSource:
     result: SearchResult
     fetched: FetchResult
     parsed: ParsedPage
-    source_id: str
+    source_id: int
 
 
 def serialize_search_result(result: SearchResult) -> dict[str, Any]:

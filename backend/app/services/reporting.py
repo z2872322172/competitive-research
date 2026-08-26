@@ -137,7 +137,7 @@ def build_evidence_snapshots(claims: list[models.Claim]) -> list[dict]:
     return sorted(snapshots.values(), key=lambda item: (-item["quality_score"], item["id"]))
 
 
-def load_report_claims(db: Session, task_id: str) -> list[models.Claim]:
+def load_report_claims(db: Session, task_id: int) -> list[models.Claim]:
     return (
         db.execute(
             select(models.Claim)
@@ -187,7 +187,7 @@ def render_key_claims(claims: list[models.Claim]) -> str:
         return "- 本轮尚未生成可入报的结构化 Claim。"
     lines = []
     for claim in claims:
-        evidence_refs = ", ".join(link.evidence_id for link in claim.evidence_links) or "暂无绑定 Evidence"
+        evidence_refs = ", ".join(str(link.evidence_id) for link in claim.evidence_links) or "暂无绑定 Evidence"
         lines.append(f"- {claim.display_text} Evidence: {evidence_refs}")
     return "\n".join(lines)
 

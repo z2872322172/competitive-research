@@ -32,8 +32,8 @@ except ImportError:
 
 
 class ResearchWorkflowState(TypedDict):
-    task_id: str
-    run_id: str
+    task_id: int
+    run_id: int
     scope: dict[str, Any]
     summary: dict[str, Any]
     errors: list[str]
@@ -193,7 +193,7 @@ def load_parsed_sources(previous_summary: dict[str, Any]) -> list[ParsedSource]:
 def append_node_event(
     db: Session,
     *,
-    run_id: str,
+    run_id: int,
     event_type: str,
     node_name: str,
     duration_ms: int,
@@ -231,7 +231,7 @@ def append_node_event(
 def append_retry_event(
     db: Session,
     *,
-    run_id: str,
+    run_id: int,
     node_name: str,
     input_summary: dict[str, Any],
     attempt: int,
@@ -258,7 +258,7 @@ def append_retry_event(
     )
 
 
-def ensure_not_canceled(db: Session, *, run_id: str, node_name: str, input_summary: dict[str, Any]) -> None:
+def ensure_not_canceled(db: Session, *, run_id: int, node_name: str, input_summary: dict[str, Any]) -> None:
     run = db.get(models.TaskRun, run_id)
     if run is None:
         return
@@ -296,15 +296,15 @@ def serializable_summary(summary: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in summary.items() if json_ready(value) is not None}
 
 
-def count_task_sources(db: Session, task_id: str) -> int:
+def count_task_sources(db: Session, task_id: int) -> int:
     return db.query(models.Source).filter_by(task_id=task_id).count()
 
 
-def count_task_evidence(db: Session, task_id: str) -> int:
+def count_task_evidence(db: Session, task_id: int) -> int:
     return db.query(models.Evidence).join(models.Source).filter(models.Source.task_id == task_id).count()
 
 
-def count_task_claims(db: Session, task_id: str) -> int:
+def count_task_claims(db: Session, task_id: int) -> int:
     return db.query(models.Claim).filter_by(task_id=task_id).count()
 
 
@@ -340,7 +340,7 @@ def build_checkpoint_state(
 def save_success_checkpoint(
     db: Session,
     *,
-    run_id: str,
+    run_id: int,
     node_name: str,
     input_summary: dict[str, Any],
     output_summary: dict[str, Any],
@@ -380,7 +380,7 @@ def save_success_checkpoint(
 def save_failed_checkpoint(
     db: Session,
     *,
-    run_id: str,
+    run_id: int,
     node_name: str,
     input_summary: dict[str, Any],
     retryable: bool,
@@ -432,7 +432,7 @@ def save_failed_checkpoint(
     db.commit()
 
 
-def prune_workflow_checkpoints(db: Session, *, run_id: str, max_checkpoints: int | None = None) -> None:
+def prune_workflow_checkpoints(db: Session, *, run_id: int, max_checkpoints: int | None = None) -> None:
     keep_limit = MAX_CHECKPOINTS_PER_RUN if max_checkpoints is None else max_checkpoints
     if keep_limit <= 0:
         return
@@ -456,7 +456,7 @@ def prune_workflow_checkpoints(db: Session, *, run_id: str, max_checkpoints: int
             db.delete(checkpoint)
 
 
-def mark_node_failed(db: Session, *, run_id: str, node_name: str, error: str) -> None:
+def mark_node_failed(db: Session, *, run_id: int, node_name: str, error: str) -> None:
     run = db.get(models.TaskRun, run_id)
     if run is None:
         return
@@ -469,7 +469,7 @@ def mark_node_failed(db: Session, *, run_id: str, node_name: str, error: str) ->
         transition_task(task, models.TaskStatus.failed, reason=error)
 
 
-def latest_success_checkpoint(db: Session, run_id: str) -> models.WorkflowCheckpoint | None:
+def latest_success_checkpoint(db: Session, run_id: int) -> models.WorkflowCheckpoint | None:
     ensure_checkpoint_table(db)
     return (
         db.query(models.WorkflowCheckpoint)
@@ -972,7 +972,7 @@ def prepare_run_for_resume(db: Session, run: models.TaskRun, task: models.Resear
     db.commit()
 
 
-def run_research_workflow(db: Session, run_id: str, delay_seconds: float = 0.0, *, resume: bool = False) -> models.TaskRun:
+def run_research_workflow(db: Session, run_id: int, delay_seconds: float = 0.0, *, resume: bool = False) -> models.TaskRun:
     run = db.get(models.TaskRun, run_id)
     if run is None:
         raise ValueError("run_not_found")

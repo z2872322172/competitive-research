@@ -5,7 +5,7 @@ from app.workers.celery_app import celery_app
 
 
 @celery_app.task(name="research.run", autoretry_for=(Exception,), retry_kwargs={"max_retries": 3})
-def run_research_task(run_id: str, resume: bool = False) -> str:
+def run_research_task(run_id: int, resume: bool = False) -> int:
     db = SessionLocal()
     try:
         effective_resume = resume or latest_success_checkpoint(db, run_id) is not None

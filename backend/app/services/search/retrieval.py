@@ -13,11 +13,11 @@ from app.services.search.indexing import decode_scope
 
 @dataclass(frozen=True)
 class SearchHit:
-    id: str
+    id: int
     kind: str
     score: float
-    task_id: str
-    source_id: str | None
+    task_id: int
+    source_id: int | None
     title: str
     snippet: str
     source_type: str | None
@@ -39,7 +39,7 @@ class ElasticsearchSearcher:
         self,
         *,
         query: str = "",
-        task_id: str | None = None,
+        task_id: int | None = None,
         competitor: str | None = None,
         dimension: str | None = None,
         source_type: str | None = None,
@@ -63,14 +63,14 @@ class ElasticsearchSearcher:
         self,
         *,
         query: str,
-        task_id: str | None,
+        task_id: int | None,
         competitor: str | None,
         dimension: str | None,
         source_type: str | None,
         limit: int,
     ) -> dict[str, Any]:
         filters: list[dict[str, Any]] = []
-        if task_id:
+        if task_id is not None:
             filters.append({"term": {"task_id": task_id}})
         if competitor:
             filters.append({"term": {"competitors": competitor}})
@@ -97,11 +97,11 @@ class ElasticsearchSearcher:
             source = {}
         kind = "evidence" if "evidence_id" in source else "source"
         return SearchHit(
-            id=str(source.get("evidence_id") or source.get("source_id") or hit.get("_id") or ""),
+            id=_parse_int(source.get("evidence_id") or source.get("source_id") or hit.get("_id")) or 0,
             kind=kind,
             score=float(hit.get("_score") or 0.0),
-            task_id=str(source.get("task_id") or ""),
-            source_id=str(source.get("source_id")) if source.get("source_id") else None,
+            task_id=_parse_int(source.get("task_id")) or 0,
+            source_id=_parse_int(source.get("source_id")),
             title=str(source.get("title") or source.get("source_title") or ""),
             snippet=str(source.get("quote") or source.get("canonical_url") or source.get("url") or ""),
             source_type=str(source.get("source_type")) if source.get("source_type") else None,
@@ -122,7 +122,7 @@ def search_research_index(
     settings: Settings,
     *,
     query: str = "",
-    task_id: str | None = None,
+    task_id: int | None = None,
     competitor: str | None = None,
     dimension: str | None = None,
     source_type: str | None = None,
@@ -153,7 +153,7 @@ def search_research_db(
     db: Session,
     *,
     query: str = "",
-    task_id: str | None = None,
+    task_id: int | None = None,
     competitor: str | None = None,
     dimension: str | None = None,
     source_type: str | None = None,
@@ -171,7 +171,7 @@ def search_research_db(
     normalized_query = query.strip().lower()
     results: list[SearchHit] = []
     for source in sources:
-        if task_id and source.task_id != task_id:
+        if task_id is not None and source.task_id != task_id:
             continue
         if source_type and source.source_type != source_type:
             continue
@@ -253,4 +253,14 @@ def _parse_datetime(value: Any) -> datetime | None:
     try:
         return datetime.fromisoformat(str(value))
     except ValueError:
+        return None
+
+
+def _parse_int(value: Any) -> int | None:
+    """ES _source 里的自增 ID 可能是 int 或字符串形式，统一转 int。"""
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
         return None

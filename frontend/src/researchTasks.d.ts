@@ -14,7 +14,7 @@ export type TaskStatusMeta = {
 }
 
 export type TaskSummary = {
-  id?: string
+  id?: number
   title: string
   scope: string
   status: string
@@ -64,4 +64,4 @@ export function buildTaskSummary(task: Partial<ResearchTaskOut>, detail?: Partia
 export function buildTaskSummaries(tasks?: Partial<ResearchTaskOut>[], detailsById?: Record<string, Partial<TaskDetailOut>>): TaskSummary[]
 export function getAvailableTaskActions(task: Partial<ResearchTaskOut>, latestRun?: Partial<TaskRunOut> | null): TaskActions
 export function buildTaskRecoveryFeedback(task: Partial<ResearchTaskOut>, latestRun?: Partial<TaskRunOut> | null): TaskRecoveryFeedback | null
-export function getRunHistory(runs?: Partial<TaskRunOut>[], currentRunId?: string): RunHistoryItem[]
+export function getRunHistory(runs?: Partial<TaskRunOut>[], currentRunId?: number): RunHistoryItem[]

@@ -251,12 +251,20 @@ def transition_task(task: models.ResearchTask, target_status: models.TaskStatus,
         task.failure_reason = reason
 
 
-def get_latest_run(db: Session, task_id: str) -> models.TaskRun | None:
+def get_latest_run(db: Session, task_id: int) -> models.TaskRun | None:
+    # 用 (col IS NULL) 前置排序替代 NULLS LAST：MySQL 不支持 NULLS LAST 子句，
+    # 该写法在 MySQL 与 SQLite 下语义一致（NULL 值均排在最后）。
     return (
         db.execute(
             select(models.TaskRun)
             .where(models.TaskRun.task_id == task_id)
-            .order_by(models.TaskRun.queued_at.desc().nullslast(), models.TaskRun.started_at.desc().nullslast(), models.TaskRun.id.desc())
+            .order_by(
+                models.TaskRun.queued_at.is_(None),
+                models.TaskRun.queued_at.desc(),
+                models.TaskRun.started_at.is_(None),
+                models.TaskRun.started_at.desc(),
+                models.TaskRun.id.desc(),
+            )
             .limit(1)
         )
         .scalars()
@@ -264,7 +272,7 @@ def get_latest_run(db: Session, task_id: str) -> models.TaskRun | None:
     )
 
 
-def create_run(db: Session, task_id: str, *, allow_rerun: bool = False, priority: int = 5) -> models.TaskRun:
+def create_run(db: Session, task_id: int, *, allow_rerun: bool = False, priority: int = 5) -> models.TaskRun:
     task = db.get(models.ResearchTask, task_id)
     if task is None:
         raise ValueError("task_not_found")
@@ -297,7 +305,7 @@ def create_run(db: Session, task_id: str, *, allow_rerun: bool = False, priority
     return run
 
 
-def prepare_failed_run_resume(db: Session, task_id: str) -> models.TaskRun:
+def prepare_failed_run_resume(db: Session, task_id: int) -> models.TaskRun:
     task = db.get(models.ResearchTask, task_id)
     if task is None:
         raise ValueError("task_not_found")
@@ -340,7 +348,7 @@ def prepare_failed_run_resume(db: Session, task_id: str) -> models.TaskRun:
 def append_event(
     db: Session,
     *,
-    run_id: str,
+    run_id: int,
     event_type: str,
     stage: str,
     message: str,
@@ -372,13 +380,13 @@ def append_event(
     return event
 
 
-def simulate_research_run(db: Session, run_id: str, delay_seconds: float = 0.0) -> models.TaskRun:
+def simulate_research_run(db: Session, run_id: int, delay_seconds: float = 0.0) -> models.TaskRun:
     from app.workflows.research_graph import run_research_workflow
 
     return run_research_workflow(db, run_id, delay_seconds=delay_seconds)
 
 
-def run_linear_research_flow(db: Session, run_id: str, delay_seconds: float = 0.0) -> models.TaskRun:
+def run_linear_research_flow(db: Session, run_id: int, delay_seconds: float = 0.0) -> models.TaskRun:
     run = db.get(models.TaskRun, run_id)
     if run is None:
         raise ValueError("run_not_found")
@@ -485,7 +493,7 @@ def generate_report_with_retry(
     raise RuntimeError(f"report_generation_failed:{last_error}")
 
 
-def build_review_report_summary(db: Session, task_id: str) -> CollectionSummary:
+def build_review_report_summary(db: Session, task_id: int) -> CollectionSummary:
     source_count = db.execute(select(models.Source.id).where(models.Source.task_id == task_id)).all()
     evidence_count = (
         db.execute(
@@ -539,7 +547,7 @@ def regenerate_report_after_review(db: Session, *, task: models.ResearchTask, ru
     return report
 
 
-def load_included_claim_ids(db: Session, task_id: str) -> list[str]:
+def load_included_claim_ids(db: Session, task_id: int) -> list[int]:
     return [
         claim_id
         for (claim_id,) in db.execute(
@@ -595,7 +603,7 @@ def verify_claims(db: Session, *, task: models.ResearchTask) -> dict[str, int | 
     }
 
 
-def mark_run_failed(db: Session, run_id: str, message: str) -> models.TaskRun:
+def mark_run_failed(db: Session, run_id: int, message: str) -> models.TaskRun:
     run = db.get(models.TaskRun, run_id)
     if run is None:
         raise ValueError("run_not_found")
@@ -612,7 +620,7 @@ def mark_run_failed(db: Session, run_id: str, message: str) -> models.TaskRun:
     return run
 
 
-def cancel_research_task(db: Session, task_id: str, *, reason: str = "canceled by user") -> models.TaskRun:
+def cancel_research_task(db: Session, task_id: int, *, reason: str = "canceled by user") -> models.TaskRun:
     task = db.get(models.ResearchTask, task_id)
     if task is None:
         raise ValueError("task_not_found")
@@ -639,7 +647,7 @@ def cancel_research_task(db: Session, task_id: str, *, reason: str = "canceled b
     return latest_run
 
 
-def get_unresolved_risky_claims(db: Session, task_id: str) -> list[models.Claim]:
+def get_unresolved_risky_claims(db: Session, task_id: int) -> list[models.Claim]:
     risky_claims = (
         db.execute(
             select(models.Claim)
@@ -657,7 +665,7 @@ def get_unresolved_risky_claims(db: Session, task_id: str) -> list[models.Claim]
     return unresolved
 
 
-def sync_task_review_status(db: Session, task_id: str) -> None:
+def sync_task_review_status(db: Session, task_id: int) -> None:
     task = db.get(models.ResearchTask, task_id)
     if task is None:
         return
@@ -712,7 +720,7 @@ def is_deep_research_task(task: models.ResearchTask) -> bool:
     return scope.get("research_type") == DEEP_RESEARCH_TYPE or (not scope.get("competitors") and scope.get("template") == DEFAULT_DEEP_RESEARCH_TEMPLATE)
 
 
-def write_demo_source_snapshot(db: Session, task_id: str, source_id: str, title: str, quote: str) -> None:
+def write_demo_source_snapshot(db: Session, task_id: int, source_id: int, title: str, quote: str) -> None:
     """Demo 数据同样统一走 ArtifactStorage 写快照，保证离线模式下证据溯源链路可用。"""
     snapshot_html = (
         "<!doctype html>\n"
@@ -893,7 +901,7 @@ def seed_generic_demo_research_objects(db: Session, task: models.ResearchTask) -
     db.commit()
 
 
-def seed_demo_research_objects(db: Session, task_id: str) -> None:
+def seed_demo_research_objects(db: Session, task_id: int) -> None:
     existing = db.execute(select(models.Source.id).where(models.Source.task_id == task_id)).first()
     if existing:
         return
@@ -1257,7 +1265,7 @@ def matching_task_ids_for_competitor(db: Session, competitor_name: str) -> list[
     return matched
 
 
-def get_source_snapshot(db: Session, source_id: str) -> SourceSnapshotOut | None:
+def get_source_snapshot(db: Session, source_id: int) -> SourceSnapshotOut | None:
     source = (
         db.execute(
             select(models.Source)
@@ -1295,7 +1303,7 @@ def get_source_snapshot(db: Session, source_id: str) -> SourceSnapshotOut | None
     )
 
 
-def unavailable_source_snapshot(source_id: str, *, content_hash: str | None, object_key: str | None) -> SourceSnapshotOut:
+def unavailable_source_snapshot(source_id: int, *, content_hash: str | None, object_key: str | None) -> SourceSnapshotOut:
     return SourceSnapshotOut(
         source_id=source_id,
         artifact_type="html_snapshot",
@@ -1307,7 +1315,7 @@ def unavailable_source_snapshot(source_id: str, *, content_hash: str | None, obj
     )
 
 
-def read_source_snapshot_raw(db: Session, source_id: str) -> tuple[str, models.SourceArtifact | None, bytes | None]:
+def read_source_snapshot_raw(db: Session, source_id: int) -> tuple[str, models.SourceArtifact | None, bytes | None]:
     """读取来源快照原始字节。
 
     返回 (status, artifact, data)：
@@ -1448,7 +1456,7 @@ def regenerate_report_manually(db: Session, *, task: models.ResearchTask, run: m
 
 def get_task_detail(
     db: Session,
-    task_id: str,
+    task_id: int,
     *,
     evidence_competitor: str | None = None,
     evidence_dimension: str | None = None,
