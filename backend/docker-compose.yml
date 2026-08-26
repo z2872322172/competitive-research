@@ -1,0 +1,46 @@
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: verda
+      MYSQL_DATABASE: verda
+      MYSQL_USER: verda
+      MYSQL_PASSWORD: verda
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.14.3
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+
+  minio:
+    image: minio/minio:RELEASE.2025-07-23T15-54-02Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+
+volumes:
+  mysql-data:
+  es-data:
+  minio-data:
+

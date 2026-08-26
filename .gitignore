@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.pytest_tmp/
+.mypy_cache/
+.ruff_cache/
+
+# Local Python environments
+.venv/
+venv/
+
+# Local env files
+.env
+.env.*
+!.env.example
+
+# Local databases and logs
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# Runtime artifacts (HTML snapshots, exported reports)
+storage/
+backend/storage/
+
+# Tencent SDK logs
+frontend/Tencent/
+
+# Frontend dependencies and build output
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+

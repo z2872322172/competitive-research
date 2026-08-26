@@ -1,0 +1,10 @@
+.venv
+__pycache__
+.pytest_cache
+*.pyc
+*.pyo
+*.log
+storage
+verda_dev.db
+verda_test.db
+tests
