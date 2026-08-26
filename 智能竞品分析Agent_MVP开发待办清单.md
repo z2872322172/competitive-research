@@ -703,8 +703,8 @@ initialize_run
 
 - [ ] 前端组件测试
 - [x] 前端构建测试
-- [ ] API 失败状态测试
-- [ ] 空数据状态测试
+- [x] API 失败状态测试
+- [x] 空数据状态测试
 - [x] 时间线事件展示测试
 - [x] 任务恢复反馈测试
 - [x] Claim 审核交互测试
@@ -712,6 +712,12 @@ initialize_run
 - [x] 报告章节证据展示测试
 - [x] 竞品库列表映射测试
 - [x] 竞品库来源复用提示测试
+
+8.2 MVP 说明（空数据状态与 API 失败状态）：
+- 新增 `researchStates.test.mjs`（16 条测试）：覆盖时间线空事件（工作台摘要“尚未开始”）、证据墙空证据与无绑定 Claim 行、审核列表空 Claim、任务摘要全空详情、未知任务状态回落草稿态但保留原始状态值。
+- API 失败状态覆盖：网络异常（fetch reject）原样抛出、500 空 body 回落 `API request failed: 500`、422 无 message 时取 error code、FastAPI `detail` 格式错误（无 error 包装）回落状态码文案。
+- 修复两处边界 bug：`buildResearchTimeline(null)` 与 `filterEvidenceViewModels(null)` 此前抛 TypeError，现安全返回空数组。
+- 测试基线更新：前端 17 个测试文件 90 条全过，构建通过。
 
 ### 8.3 端到端验收
 

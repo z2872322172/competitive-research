@@ -119,7 +119,7 @@ function buildRunPlaceholder(latestRun) {
 export function buildResearchTimeline(events, latestRun = null) {
   const byNode = new Map()
 
-  for (const event of events) {
+  for (const event of events || []) {
     const status = getLifecycleStatus(event.type)
     if (!status || !(status in STATUS_LABELS)) continue
 

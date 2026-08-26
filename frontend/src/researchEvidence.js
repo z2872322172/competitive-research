@@ -69,7 +69,7 @@ export function filterEvidenceViewModels(items, filters = {}) {
   const competitor = normalizeFilterValue(filters.competitor)
   const dimension = normalizeFilterValue(filters.dimension)
 
-  return items.filter((item) => {
+  return (items || []).filter((item) => {
     if (sourceType && item.sourceType !== sourceType) return false
     if (competitor && Array.isArray(item.competitors) && !item.competitors.includes(competitor)) return false
     if (dimension && Array.isArray(item.dimensions) && !item.dimensions.includes(dimension)) return false
