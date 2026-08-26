@@ -531,8 +531,8 @@ initialize_run
 - [ ] Docker Compose 可以启动前端、后端、MySQL、Redis、Celery、MinIO、Elasticsearch
 - [x] 使用 MySQL 和 Celery 时，完整研究流程能跑通（自增主键版本复验：任务经 API → Celery/Redis → 工作流 → MySQL 全链路完成，Tavily 真实检索入库 4 Sources / 12 Evidence / 4 Claims 全部绑定 Evidence，报告生成并成功导出，11 个节点 checkpoint 全部 succeeded）
 - [ ] HTML 快照和报告导出件可以进入 MinIO / S3
-- [ ] Evidence 可以进入 Elasticsearch 并支持检索
-- [ ] MySQL 是唯一事实库，ES 和对象存储都可以从事实数据重建
+- [x] Evidence 可以进入 Elasticsearch 并支持检索（真实任务 9 条 Evidence 自动入 ES；`/v1/search?q=Copilot` 命中 8 条；text 字段改用 ES 内置 cjk 分词器，中文子串检索端到端验证命中，修复了默认 standard 分词器下中文不可检索的缺陷）
+- [x] MySQL 是唯一事实库，ES 和对象存储都可以从事实数据重建（实测：删除 verda-sources / verda-evidence 全部索引后，调 `search-index/rebuild` 从 MySQL 完整重建 3 Sources + 9 Evidence，检索恢复；对象存储侧快照走 content_hash 寻址，同样可由 MySQL artifact 记录重新定位）
 
 ---
 

@@ -73,10 +73,11 @@ class ElasticsearchIndexer:
         return summary
 
     def ensure_indices(self) -> None:
-        for index_name, mapping in self._index_definitions().items():
+        for index_name, definition in self._index_definitions().items():
             response = self._request("HEAD", f"/{index_name}", raise_for_status=False)
             if response.status_code == 404:
-                self._request("PUT", f"/{index_name}", json={"mappings": mapping})
+                # definition 已含 settings + mappings 完整结构，直接作为建索引体。
+                self._request("PUT", f"/{index_name}", json=definition)
 
     def index_source(self, source: models.Source, *, competitors: list[str], dimensions: list[str]) -> None:
         self._request(
@@ -114,47 +115,55 @@ class ElasticsearchIndexer:
             return response
 
     def _index_definitions(self) -> dict[str, dict[str, Any]]:
+        # 中文检索：text 字段使用 ES 内置 cjk（二元）分词器，中文子串（如"定价"）可命中，
+        # 英文单词分词行为与 standard 一致；keyword 字段不受影响。
         return {
             self.source_index: {
-                "properties": {
-                    "source_id": {"type": "keyword"},
-                    "task_id": {"type": "keyword"},
-                    "title": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
-                    "url": {"type": "keyword"},
-                    "canonical_url": {"type": "keyword"},
-                    "source_type": {"type": "keyword"},
-                    "publisher": {"type": "keyword"},
-                    "social_platform": {"type": "keyword"},
-                    "sentiment": {"type": "keyword"},
-                    "heat_score": {"type": "float"},
-                    "content_hash": {"type": "keyword"},
-                    "index_status": {"type": "keyword"},
-                    "is_primary": {"type": "boolean"},
-                    "competitors": {"type": "keyword"},
-                    "dimensions": {"type": "keyword"},
-                    "retrieved_at": {"type": "date"},
-                    "indexed_at": {"type": "date"},
-                }
+                "settings": {"analysis": {"analyzer": {"cjk_text": {"type": "cjk"}}}},
+                "mappings": {
+                    "properties": {
+                        "source_id": {"type": "keyword"},
+                        "task_id": {"type": "keyword"},
+                        "title": {"type": "text", "analyzer": "cjk_text", "fields": {"keyword": {"type": "keyword"}}},
+                        "url": {"type": "keyword"},
+                        "canonical_url": {"type": "keyword"},
+                        "source_type": {"type": "keyword"},
+                        "publisher": {"type": "keyword"},
+                        "social_platform": {"type": "keyword"},
+                        "sentiment": {"type": "keyword"},
+                        "heat_score": {"type": "float"},
+                        "content_hash": {"type": "keyword"},
+                        "index_status": {"type": "keyword"},
+                        "is_primary": {"type": "boolean"},
+                        "competitors": {"type": "keyword"},
+                        "dimensions": {"type": "keyword"},
+                        "retrieved_at": {"type": "date"},
+                        "indexed_at": {"type": "date"},
+                    }
+                },
             },
             self.evidence_index: {
-                "properties": {
-                    "evidence_id": {"type": "keyword"},
-                    "task_id": {"type": "keyword"},
-                    "source_id": {"type": "keyword"},
-                    "quote": {"type": "text"},
-                    "evidence_hash": {"type": "keyword"},
-                    "extraction_method": {"type": "keyword"},
-                    "source_version": {"type": "integer"},
-                    "language": {"type": "keyword"},
-                    "quality_score": {"type": "float"},
-                    "source_title": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
-                    "source_url": {"type": "keyword"},
-                    "source_type": {"type": "keyword"},
-                    "publisher": {"type": "keyword"},
-                    "competitors": {"type": "keyword"},
-                    "dimensions": {"type": "keyword"},
-                    "created_at": {"type": "date"},
-                }
+                "settings": {"analysis": {"analyzer": {"cjk_text": {"type": "cjk"}}}},
+                "mappings": {
+                    "properties": {
+                        "evidence_id": {"type": "keyword"},
+                        "task_id": {"type": "keyword"},
+                        "source_id": {"type": "keyword"},
+                        "quote": {"type": "text", "analyzer": "cjk_text"},
+                        "evidence_hash": {"type": "keyword"},
+                        "extraction_method": {"type": "keyword"},
+                        "source_version": {"type": "integer"},
+                        "language": {"type": "keyword"},
+                        "quality_score": {"type": "float"},
+                        "source_title": {"type": "text", "analyzer": "cjk_text", "fields": {"keyword": {"type": "keyword"}}},
+                        "source_url": {"type": "keyword"},
+                        "source_type": {"type": "keyword"},
+                        "publisher": {"type": "keyword"},
+                        "competitors": {"type": "keyword"},
+                        "dimensions": {"type": "keyword"},
+                        "created_at": {"type": "date"},
+                    }
+                },
             },
         }
 
