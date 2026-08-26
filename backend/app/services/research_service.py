@@ -1,6 +1,7 @@
 import hashlib
 import json
 from datetime import datetime
+from html import escape as escape_html
 from time import sleep
 from typing import Any
 
@@ -711,6 +712,30 @@ def is_deep_research_task(task: models.ResearchTask) -> bool:
     return scope.get("research_type") == DEEP_RESEARCH_TYPE or (not scope.get("competitors") and scope.get("template") == DEFAULT_DEEP_RESEARCH_TEMPLATE)
 
 
+def write_demo_source_snapshot(db: Session, task_id: str, source_id: str, title: str, quote: str) -> None:
+    """Demo 数据同样统一走 ArtifactStorage 写快照，保证离线模式下证据溯源链路可用。"""
+    snapshot_html = (
+        "<!doctype html>\n"
+        '<html lang="en"><head><meta charset="utf-8">'
+        f"<title>{escape_html(title)}</title></head>"
+        f"<body><article><h1>{escape_html(title)}</h1><p>{escape_html(quote)}</p></article></body></html>"
+    )
+    snapshot_bytes = snapshot_html.encode("utf-8")
+    object_key = f"snapshots/{task_id}/{source_id}.html"
+    storage = build_artifact_storage(get_settings())
+    storage.put_bytes(object_key, snapshot_bytes, content_type="text/html; charset=utf-8")
+    db.add(
+        models.SourceArtifact(
+            source_id=source_id,
+            artifact_type="html_snapshot",
+            object_key=object_key,
+            sha256=hashlib.sha256(snapshot_bytes).hexdigest(),
+            content_type="text/html; charset=utf-8",
+            size_bytes=len(snapshot_bytes),
+        )
+    )
+
+
 def seed_generic_demo_research_objects(db: Session, task: models.ResearchTask) -> None:
     scope = decode_json(task.scope_json)
     research_question = str(scope.get("research_question") or task.title).strip()
@@ -756,16 +781,7 @@ def seed_generic_demo_research_objects(db: Session, task: models.ResearchTask) -
         )
         db.add(source)
         db.flush()
-        db.add(
-            models.SourceArtifact(
-                source_id=source.id,
-                artifact_type="html_snapshot",
-                object_key=f"snapshots/{source.id}.html",
-                sha256=content_hash,
-                content_type="text/html; charset=utf-8",
-                size_bytes=len(row["quote"].encode("utf-8")),
-            )
-        )
+        write_demo_source_snapshot(db, task.id, source.id, row["title"], row["quote"])
         evidence_hash = hashlib.sha256(f"{source.id}:{row['quote']}".encode("utf-8")).hexdigest()
         evidence = models.Evidence(
             source_id=source.id,
@@ -929,16 +945,7 @@ def seed_demo_research_objects(db: Session, task_id: str) -> None:
         )
         db.add(source)
         db.flush()
-        db.add(
-            models.SourceArtifact(
-                source_id=source.id,
-                artifact_type="html_snapshot",
-                object_key=f"snapshots/{source.id}.html",
-                sha256=content_hash,
-                content_type="text/html; charset=utf-8",
-                size_bytes=len(row["quote"].encode("utf-8")),
-            )
-        )
+        write_demo_source_snapshot(db, task_id, source.id, row["title"], row["quote"])
         evidence_hash = hashlib.sha256(f"{source.id}:{row['quote']}".encode("utf-8")).hexdigest()
         evidence = models.Evidence(
             source_id=source.id,

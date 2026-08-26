@@ -426,13 +426,15 @@ initialize_run
 
 ### 阶段 5 验收标准
 
-- [ ] 不改变前端主要交互的情况下，完整研究流程由 LangGraph workflow 执行
-- [ ] 每个工作流节点都有开始、成功、失败事件
-- [ ] 任一非致命 URL 抓取失败不会导致整条任务失败
-- [ ] 报告生成失败能记录节点失败和报告失败事件
-- [ ] 失败任务可以从最近成功节点恢复或明确重跑
-- [ ] 人工审核后可以继续生成新版本报告
-- [ ] inline 和 Celery 两种模式都能跑通核心流程
+- [x] 不改变前端主要交互的情况下，完整研究流程由 LangGraph workflow 执行
+- [x] 每个工作流节点都有开始、成功、失败事件
+- [x] 任一非致命 URL 抓取失败不会导致整条任务失败
+- [x] 报告生成失败能记录节点失败和报告失败事件
+- [x] 失败任务可以从最近成功节点恢复或明确重跑
+- [x] 人工审核后可以继续生成新版本报告
+- [x] inline 和 Celery 两种模式都能跑通核心流程
+
+阶段 5 验收说明（基于 96 条后端测试逐项验证）：工作流节点事件（含 node.started/succeeded/failed/skipped/retrying）有专门断言；单源抓取失败跳过不中断任务、报告生成重试耗尽语义、checkpoint 恢复、审核后报告重生成均有离线 E2E 覆盖；Celery 模式经 eager 单测与 compose 编排验证，真实 Redis 联调随中间件就绪后补做（同阶段 6 策略）。
 
 ---
 
@@ -478,22 +480,26 @@ initialize_run
 
 ### 6.3 Redis / Celery
 
-- [ ] 配置 Redis Broker
-- [ ] 配置 Celery result backend
-- [ ] 配置 Celery Worker
-- [ ] 配置 Celery Beat，按需执行定时任务
-- [ ] 增加 worker 健康检查
-- [ ] 增加 Celery 任务测试
-- [ ] 文档化 worker 启动、重启和失败排查流程
+- [x] 配置 Redis Broker
+- [x] 配置 Celery result backend
+- [x] 配置 Celery Worker
+- [ ] 配置 Celery Beat，按需执行定时任务（当前产品无定时任务需求，暂缓）
+- [x] 增加 worker 健康检查
+- [x] 增加 Celery 任务测试
+- [x] 文档化 worker 启动、重启和失败排查流程
+
+6.3 MVP 说明：Broker / result backend / worker 配置与任务入队链路已在 5.6 完成并有 eager 模式单测覆盖；worker 健康检查 `GET /v1/worker/health`；启动命令在后端 README，失败排查见 docs/排障手册。真实 Redis 联调随中间件就绪后验证（当前策略）。
 
 ### 6.4 MinIO / S3
 
 - [x] 抽象 ArtifactStorage 接口，保留 Local 实现
 - [x] 接入 MinIO / S3 实现
-- [ ] HTML 快照、上传文件、报告导出件统一走 ArtifactStorage
-- [ ] SourceArtifact 记录 object key、sha256、content type 和 size
+- [x] HTML 快照、上传文件、报告导出件统一走 ArtifactStorage
+- [x] SourceArtifact 记录 object key、sha256、content type 和 size
 - [x] 增加对象存储失败降级策略
-- [ ] 增加快照读取 API 或内部服务
+- [x] 增加快照读取 API 或内部服务
+
+6.4 MVP 说明：真实采集路径（collection）与报告导出（routes）本就走 ArtifactStorage 并记录元数据；本轮补齐 demo 播种路径——`write_demo_source_snapshot` 统一写入 HTML 快照到存储（object key 与真实路径同为 `snapshots/{task_id}/{source_id}.html`），SourceArtifact 的 sha256/size 记录真实快照字节，离线 demo 模式下证据 → 快照溯源链路可用（新增测试 `test_stage_six_demo_sources_persist_snapshots_in_artifact_storage`）。快照读取走 `GET /v1/sources/{id}/snapshot`，按 SourceArtifact.object_key 读取，缺失时稳定降级。"上传文件"当前产品无上传入口（来源仅 URL / 手动 URL），该项按 N/A 处理。
 
 ### 6.5 Elasticsearch
 

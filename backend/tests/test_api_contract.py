@@ -387,6 +387,38 @@ def test_stage_seven_source_snapshot_reports_unavailable_without_file(monkeypatc
         assert missing_source.status_code == 404
 
 
+def test_stage_six_demo_sources_persist_snapshots_in_artifact_storage(monkeypatch, tmp_path):
+    monkeypatch.setenv("ARTIFACT_STORAGE_DIR", str(tmp_path))
+    get_settings.cache_clear()
+
+    with TestClient(app) as client:
+        client.delete("/v1/dev/demo-data")
+        task = client.post(
+            "/v1/research-tasks",
+            json={
+                "prompt": "Analyze Cursor pricing and enterprise controls",
+                "competitors": ["Cursor"],
+                "dimensions": ["pricing"],
+            },
+        ).json()
+        client.post(f"/v1/research-tasks/{task['id']}/confirm")
+
+        detail = client.get(f"/v1/research-tasks/{task['id']}").json()
+        assert detail["sources"]
+        for source in detail["sources"]:
+            snapshot = client.get(f"/v1/sources/{source['id']}/snapshot").json()
+            assert snapshot["available"] is True
+            assert snapshot["object_key"].startswith(f"snapshots/{task['id']}/")
+            assert snapshot["char_count"] > 0
+            assert snapshot["summary"]
+
+        snapshot_dir = tmp_path / "snapshots" / task["id"]
+        assert snapshot_dir.exists()
+        assert list(snapshot_dir.glob("*.html"))
+
+    get_settings.cache_clear()
+
+
 def test_stage_six_local_artifact_storage_reads_and_writes_text(tmp_path):
     storage = LocalArtifactStorage(tmp_path)
 
