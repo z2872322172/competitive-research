@@ -473,10 +473,10 @@ initialize_run
 
 - [x] 从 SQLite 切换到 MySQL 的配置验证
 - [x] 检查 SQLAlchemy 字段类型在 MySQL 下的兼容性
-- [ ] 完成数据库迁移脚本
-- [ ] 增加 MySQL 下的模型层测试
-- [ ] 增加迁移回归测试
-- [ ] 明确本地 SQLite 数据不作为生产事实库
+- [x] 完成数据库迁移脚本（init_mysql_schema.sql：17 表 DROP+CREATE 全量 DDL，由 generate_mysql_schema.py 从 SQLAlchemy 模型自动生成，已在真实 MySQL 8.0 全量执行验证）
+- [x] 增加 MySQL 下的模型层测试（tests/test_mysql_model_layer.py：自增主键 BIGINT auto_increment、外键整型对齐、大 JSON 字段 MEDIUMTEXT、utf8mb4 中文+emoji 无损、整型 ID 全链路写入/关联/回读；经 TEST_MYSQL_URL 在真实 MySQL 上 6/6 通过，未配置时自动跳过不影响离线套件）
+- [x] 增加迁移回归测试（同文件：DDL 脚本在全新数据库完整执行 17 表齐全、含 DROP IF EXISTS 幂等可重复执行）
+- [x] 明确本地 SQLite 数据不作为生产事实库（.env.example 头部声明：SQLite 仅限本地开发/离线演示，生产必须 MySQL，ES/对象存储均可从 MySQL 重建）
 
 6.2 真实联调记录（2026-08-26，MySQL 192.168.150.101:3306/verda，utf8mb4）：`create_all` 建表 15 张，含全表/全字段中文注释（Navicat 等工具可直接查看）。兼容性检查发现并修复两处 SQLite 与 MySQL 行为差异：① `ORDER BY ... NULLS LAST` MySQL 8 不支持，改为 `(col IS NULL)` 前置排序（跨方言语义一致）；② MySQL `TEXT` 上限 64KB，LangGraph checkpoint 的 `state_json` 溢出报 `Data too long`，引入 `LargeText = Text().with_variant(MEDIUMTEXT, "mysql")` 应用于 6 个大 JSON 字段（checkpoint 三字段、事件 payload、运行/报告快照）。测试封闭性：新增 `tests/conftest.py` 在导入 app 前强制 SQLite + inline，本机 `.env` 配置真实 MySQL/Celery 后测试套件仍 98 passed。迁移脚本（Alembic 基线）已就绪但尚未在真实 MySQL 上走 Alembic 升级流程（当前用 create_all 建表），模型层/迁移回归测试待补。
 
@@ -528,7 +528,7 @@ initialize_run
 
 ### 阶段 6 验收标准
 
-- [ ] Docker Compose 可以启动前端、后端、MySQL、Redis、Celery、MinIO、Elasticsearch
+- [ ] Docker Compose 可以启动前端、后端、MySQL、Redis、Celery、MinIO、Elasticsearch（配置已完成并经 `docker compose config` 校验：7 服务 + 健康检查 + 启动依赖 + API Key 环境变量透传；实际一键拉起待 Docker 引擎可用后执行）
 - [x] 使用 MySQL 和 Celery 时，完整研究流程能跑通（自增主键版本复验：任务经 API → Celery/Redis → 工作流 → MySQL 全链路完成，Tavily 真实检索入库 4 Sources / 12 Evidence / 4 Claims 全部绑定 Evidence，报告生成并成功导出，11 个节点 checkpoint 全部 succeeded）
 - [ ] HTML 快照和报告导出件可以进入 MinIO / S3
 - [x] Evidence 可以进入 Elasticsearch 并支持检索（真实任务 9 条 Evidence 自动入 ES；`/v1/search?q=Copilot` 命中 8 条；text 字段改用 ES 内置 cjk 分词器，中文子串检索端到端验证命中，修复了默认 standard 分词器下中文不可检索的缺陷）
