@@ -1,13 +1,13 @@
-import json
 from hashlib import sha256
 from time import sleep
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, selectinload
 
 from app import models
+from app.auth import AuthContext, get_auth, require_auth
 from app.config import get_settings
 from app.db import SessionLocal, get_db
 from app.schemas import (
@@ -55,19 +55,21 @@ def worker_health() -> dict[str, str]:
 
 
 @router.get("/metrics", response_model=MonitoringMetricsOut)
-def monitoring_metrics(db: Session = Depends(get_db)) -> MonitoringMetricsOut:
+def monitoring_metrics(
+    auth: AuthContext = Depends(require_auth),
+    db: Session = Depends(get_db),
+) -> MonitoringMetricsOut:
     return MonitoringMetricsOut(**research_service.build_monitoring_metrics(db))
 
 
 @router.post("/research-tasks/{task_id}/search-index/rebuild", response_model=SearchIndexRebuildOut)
 def rebuild_research_task_search_index(
-    task_id: str,
-    workspace_id: str | None = Header(default=None, alias="X-Workspace-Id"),
-    created_by: str | None = Header(default=None, alias="X-User-Id"),
+    task_id: int,
+    auth: AuthContext = Depends(get_auth),
     db: Session = Depends(get_db),
 ) -> SearchIndexRebuildOut:
     task = db.get(models.ResearchTask, task_id)
-    if task is None or not task_matches_scope(task.workspace_id, task.created_by, workspace_id, created_by):
+    if task is None or not auth.can_access(task.workspace_id, task.created_by):
         raise HTTPException(status_code=404, detail="research task not found")
     summary = ElasticsearchIndexer(get_settings()).rebuild_task(db, task_id)
     return SearchIndexRebuildOut(
@@ -82,14 +84,16 @@ def rebuild_research_task_search_index(
 @router.get("/search", response_model=list[SearchHitOut])
 def search_research_sources(
     q: str = "",
-    task_id: str | None = None,
+    task_id: int | None = None,
     competitor: str | None = None,
     dimension: str | None = None,
     source_type: str | None = None,
     limit: int = Query(default=20, ge=1, le=50),
+    auth: AuthContext = Depends(require_auth),
     db: Session = Depends(get_db),
 ) -> list[SearchHitOut]:
-    if task_id is not None and db.get(models.ResearchTask, task_id) is None:
+    task = db.get(models.ResearchTask, task_id) if task_id is not None else None
+    if task_id is not None and (task is None or not auth.can_access(task.workspace_id, task.created_by)):
         raise HTTPException(status_code=404, detail="research task not found")
     hits = search_research_index(
         db,
@@ -105,7 +109,13 @@ def search_research_sources(
 
 
 @router.post("/competitors", response_model=CompetitorProfileOut, status_code=201)
-def create_competitor_profile(payload: CompetitorProfileCreate, db: Session = Depends(get_db)) -> CompetitorProfileOut:
+def create_competitor_profile(
+    payload: CompetitorProfileCreate,
+    auth: AuthContext = Depends(get_auth),
+    db: Session = Depends(get_db),
+) -> CompetitorProfileOut:
+    # strict 模式下竞品归属强制绑定到当前激活工作区，客户端传入值仅作请求意向不作信任。
+    payload.workspace_id = auth.resolve_workspace_for_create(payload.workspace_id)
     try:
         return research_service.create_competitor_profile(db, payload)
     except ValueError as exc:
@@ -115,12 +125,30 @@ def create_competitor_profile(payload: CompetitorProfileCreate, db: Session = De
 
 
 @router.get("/competitors", response_model=list[CompetitorProfileOut])
-def list_competitor_profiles(workspace_id: str = "default", db: Session = Depends(get_db)) -> list[CompetitorProfileOut]:
-    return research_service.list_competitor_profiles(db, workspace_id=workspace_id)
+def list_competitor_profiles(
+    workspace_id: str | None = None,
+    auth: AuthContext = Depends(get_auth),
+    db: Session = Depends(get_db),
+) -> list[CompetitorProfileOut]:
+    if auth.strict:
+        visible = [workspace_id] if workspace_id in auth.workspace_ids else auth.workspace_ids
+        rows: list[CompetitorProfileOut] = []
+        for ws in visible:
+            rows.extend(research_service.list_competitor_profiles(db, workspace_id=ws))
+        return rows
+    return research_service.list_competitor_profiles(db, workspace_id=workspace_id or "default")
 
 
 @router.post("/research-tasks", response_model=ResearchTaskOut, status_code=201)
-def create_research_task(payload: ResearchTaskCreate, db: Session = Depends(get_db)) -> ResearchTaskOut:
+def create_research_task(
+    payload: ResearchTaskCreate,
+    auth: AuthContext = Depends(get_auth),
+    db: Session = Depends(get_db),
+) -> ResearchTaskOut:
+    # strict 模式下任务归属与创建人由登录态决定，禁止客户端伪造他人工作区/署名。
+    payload.workspace_id = auth.resolve_workspace_for_create(payload.workspace_id)
+    if auth.strict:
+        payload.created_by = auth.username
     task = research_service.create_task(db, payload)
     return research_service.serialize_task(task)
 
@@ -134,15 +162,21 @@ def list_research_tasks(
     created_by: str | None = None,
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
+    auth: AuthContext = Depends(get_auth),
     db: Session = Depends(get_db),
 ) -> list[ResearchTaskOut]:
     statement = select(models.ResearchTask)
     if status:
         statement = statement.where(models.ResearchTask.status == status)
-    if workspace_id:
-        statement = statement.where(models.ResearchTask.workspace_id == workspace_id)
-    if created_by:
-        statement = statement.where(models.ResearchTask.created_by == created_by)
+    if auth.strict:
+        # 隔离边界：只返回登录用户所在工作区的任务，query 参数中的过滤词被忽略。
+        visible_workspaces = [workspace_id] if workspace_id in auth.workspace_ids else auth.workspace_ids
+        statement = statement.where(models.ResearchTask.workspace_id.in_(visible_workspaces))
+    else:
+        if workspace_id:
+            statement = statement.where(models.ResearchTask.workspace_id == workspace_id)
+        if created_by:
+            statement = statement.where(models.ResearchTask.created_by == created_by)
     if q:
         keyword = f"%{q}%"
         statement = statement.where(models.ResearchTask.title.ilike(keyword) | models.ResearchTask.prompt.ilike(keyword))
@@ -152,12 +186,11 @@ def list_research_tasks(
 
 @router.get("/research-tasks/{task_id}", response_model=TaskDetailOut)
 def get_research_task(
-    task_id: str,
+    task_id: int,
     evidence_competitor: str | None = None,
     evidence_dimension: str | None = None,
     evidence_source_type: str | None = None,
-    workspace_id: str | None = Header(default=None, alias="X-Workspace-Id"),
-    created_by: str | None = Header(default=None, alias="X-User-Id"),
+    auth: AuthContext = Depends(get_auth),
     db: Session = Depends(get_db),
 ) -> TaskDetailOut:
     detail = research_service.get_task_detail(
@@ -169,7 +202,7 @@ def get_research_task(
     )
     if detail is None:
         raise HTTPException(status_code=404, detail="research task not found")
-    if not task_matches_scope(detail.task.workspace_id, detail.task.created_by, workspace_id, created_by):
+    if not auth.can_access(detail.task.workspace_id, detail.task.created_by):
         raise HTTPException(status_code=404, detail="research task not found")
     return detail
 
@@ -181,7 +214,7 @@ def enqueue_research_run(run: models.TaskRun, *, resume: bool = False) -> None:
     run_research_task.apply_async(args=[run.id], kwargs=kwargs, queue="research", priority=run.priority)
 
 
-def run_workflow_in_background(run_id: str, resume: bool = False) -> None:
+def run_workflow_in_background(run_id: int, resume: bool = False) -> None:
     from app.workflows.research_graph import run_research_workflow
 
     db = SessionLocal()
@@ -193,31 +226,17 @@ def run_workflow_in_background(run_id: str, resume: bool = False) -> None:
         db.close()
 
 
-def task_matches_scope(
-    resource_workspace_id: str,
-    resource_created_by: str,
-    workspace_id: str | None,
-    created_by: str | None,
-) -> bool:
-    if workspace_id and resource_workspace_id != workspace_id:
-        return False
-    if created_by and resource_created_by != created_by:
-        return False
-    return True
-
-
 @router.post("/research-tasks/{task_id}/confirm", response_model=TaskRunOut)
 def confirm_research_task(
-    task_id: str,
+    task_id: int,
     background_tasks: BackgroundTasks,
     priority: int = Query(default=5, ge=0, le=9),
     background: bool = Query(default=False),
-    workspace_id: str | None = Header(default=None, alias="X-Workspace-Id"),
-    created_by: str | None = Header(default=None, alias="X-User-Id"),
+    auth: AuthContext = Depends(get_auth),
     db: Session = Depends(get_db),
 ) -> TaskRunOut:
     task = db.get(models.ResearchTask, task_id)
-    if task is None or not task_matches_scope(task.workspace_id, task.created_by, workspace_id, created_by):
+    if task is None or not auth.can_access(task.workspace_id, task.created_by):
         raise HTTPException(status_code=404, detail="research task not found")
     try:
         run = research_service.create_run(db, task_id, priority=priority)
@@ -244,16 +263,15 @@ def confirm_research_task(
 
 @router.post("/research-tasks/{task_id}/runs", response_model=TaskRunOut, status_code=201)
 def rerun_research_task(
-    task_id: str,
+    task_id: int,
     background_tasks: BackgroundTasks,
     priority: int = Query(default=5, ge=0, le=9),
     background: bool = Query(default=False),
-    workspace_id: str | None = Header(default=None, alias="X-Workspace-Id"),
-    created_by: str | None = Header(default=None, alias="X-User-Id"),
+    auth: AuthContext = Depends(get_auth),
     db: Session = Depends(get_db),
 ) -> TaskRunOut:
     task = db.get(models.ResearchTask, task_id)
-    if task is None or not task_matches_scope(task.workspace_id, task.created_by, workspace_id, created_by):
+    if task is None or not auth.can_access(task.workspace_id, task.created_by):
         raise HTTPException(status_code=404, detail="research task not found")
     try:
         run = research_service.create_run(db, task_id, allow_rerun=True, priority=priority)
@@ -280,15 +298,14 @@ def rerun_research_task(
 
 @router.post("/research-tasks/{task_id}/resume", response_model=TaskRunOut)
 def resume_research_task(
-    task_id: str,
+    task_id: int,
     background_tasks: BackgroundTasks,
     background: bool = Query(default=False),
-    workspace_id: str | None = Header(default=None, alias="X-Workspace-Id"),
-    created_by: str | None = Header(default=None, alias="X-User-Id"),
+    auth: AuthContext = Depends(get_auth),
     db: Session = Depends(get_db),
 ) -> TaskRunOut:
     task = db.get(models.ResearchTask, task_id)
-    if task is None or not task_matches_scope(task.workspace_id, task.created_by, workspace_id, created_by):
+    if task is None or not auth.can_access(task.workspace_id, task.created_by):
         raise HTTPException(status_code=404, detail="research task not found")
     try:
         run = research_service.prepare_failed_run_resume(db, task_id)
@@ -320,14 +337,13 @@ def resume_research_task(
 
 @router.post("/research-tasks/{task_id}/cancel", response_model=TaskRunOut)
 def cancel_research_task(
-    task_id: str,
+    task_id: int,
     payload: CancelTaskCreate,
-    workspace_id: str | None = Header(default=None, alias="X-Workspace-Id"),
-    created_by: str | None = Header(default=None, alias="X-User-Id"),
+    auth: AuthContext = Depends(get_auth),
     db: Session = Depends(get_db),
 ) -> TaskRunOut:
     task = db.get(models.ResearchTask, task_id)
-    if task is None or not task_matches_scope(task.workspace_id, task.created_by, workspace_id, created_by):
+    if task is None or not auth.can_access(task.workspace_id, task.created_by):
         raise HTTPException(status_code=404, detail="research task not found")
     try:
         run = research_service.cancel_research_task(db, task_id, reason=payload.reason)
@@ -362,8 +378,15 @@ def reset_demo_data(db: Session = Depends(get_db)) -> dict[str, int | str]:
 
 
 @router.get("/research-tasks/{task_id}/events", response_model=list[ResearchEventOut])
-def list_research_events(task_id: str, after: int = 0, db: Session = Depends(get_db)) -> list[ResearchEventOut]:
+def list_research_events(
+    task_id: int,
+    after: int = 0,
+    auth: AuthContext = Depends(get_auth),
+    db: Session = Depends(get_db),
+) -> list[ResearchEventOut]:
     task = db.get(models.ResearchTask, task_id)
+    if task is None or not auth.can_access(task.workspace_id, task.created_by):
+        return []
     run = None
     if task and task.current_run_id:
         current_run = db.get(models.TaskRun, task.current_run_id)
@@ -395,12 +418,21 @@ def list_research_events(task_id: str, after: int = 0, db: Session = Depends(get
 
 
 @router.get("/research-tasks/{task_id}/events/stream")
-def stream_research_events(task_id: str, after: int = 0, db: Session = Depends(get_db)) -> StreamingResponse:
+def stream_research_events(
+    task_id: int,
+    after: int = 0,
+    auth: AuthContext = Depends(get_auth),
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    task = db.get(models.ResearchTask, task_id)
+    if task is None or not auth.can_access(task.workspace_id, task.created_by):
+        raise HTTPException(status_code=404, detail="research task not found")
+
     def event_generator():
         cursor = after
         idle_ticks = 0
         while idle_ticks < 60:
-            events = list_research_events(task_id, cursor, db)
+            events = list_research_events(task_id, cursor, auth=auth, db=db)
             if not events:
                 idle_ticks += 1
                 sleep(1)
@@ -413,24 +445,45 @@ def stream_research_events(task_id: str, after: int = 0, db: Session = Depends(g
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
-@router.get("/sources/{source_id}")
-def get_source(source_id: str, db: Session = Depends(get_db)):
-    source = db.get(models.Source, source_id)
+def ensure_source_accessible(db: Session, source: models.Source | None, auth: AuthContext) -> models.Source:
+    """来源/快照/证据共用的隔离校验：经所属任务判断工作区归属。"""
     if source is None:
+        raise HTTPException(status_code=404, detail="source not found")
+    task = db.get(models.ResearchTask, source.task_id)
+    if task is None or not auth.can_access(task.workspace_id, task.created_by):
         raise HTTPException(status_code=404, detail="source not found")
     return source
 
 
+@router.get("/sources/{source_id}")
+def get_source(source_id: int, auth: AuthContext = Depends(get_auth), db: Session = Depends(get_db)):
+    source = ensure_source_accessible(db, db.get(models.Source, source_id), auth)
+    return source
+
+
 @router.get("/sources/{source_id}/snapshot", response_model=SourceSnapshotOut)
-def get_source_snapshot(source_id: str, db: Session = Depends(get_db)) -> SourceSnapshotOut:
-    snapshot = research_service.get_source_snapshot(db, source_id)
+def get_source_snapshot(
+    source_id: int,
+    auth: AuthContext = Depends(get_auth),
+    db: Session = Depends(get_db),
+) -> SourceSnapshotOut:
+    source = ensure_source_accessible(db, db.get(models.Source, source_id), auth)
+    snapshot = research_service.get_source_snapshot(db, source.id)
     if snapshot is None:
         raise HTTPException(status_code=404, detail="source not found")
     return snapshot
 
 
 @router.get("/sources/{source_id}/snapshot/raw")
-def get_source_snapshot_raw(source_id: str, db: Session = Depends(get_db)) -> Response:
+def get_source_snapshot_raw(
+    source_id: int,
+    auth: AuthContext = Depends(get_auth),
+    db: Session = Depends(get_db),
+) -> Response:
+    source = db.get(models.Source, source_id)
+    if source is not None:
+        # 隔离校验只拦截"存在但无权访问"的来源；不存在的来源交给领域层返回 source_not_found 错误码。
+        ensure_source_accessible(db, source, auth)
     status, artifact, data = research_service.read_source_snapshot_raw(db, source_id)
     if status in {"source_not_found", "snapshot_not_found"}:
         raise HTTPException(status_code=404, detail={"code": f"{status}", "message": "snapshot not found for this source"})
@@ -448,7 +501,11 @@ def get_source_snapshot_raw(source_id: str, db: Session = Depends(get_db)) -> Re
 
 
 @router.get("/evidence/{evidence_id}")
-def get_evidence(evidence_id: str, db: Session = Depends(get_db)):
+def get_evidence(
+    evidence_id: int,
+    auth: AuthContext = Depends(get_auth),
+    db: Session = Depends(get_db),
+):
     evidence = (
         db.execute(
             select(models.Evidence)
@@ -460,14 +517,14 @@ def get_evidence(evidence_id: str, db: Session = Depends(get_db)):
     )
     if evidence is None:
         raise HTTPException(status_code=404, detail="evidence not found")
+    ensure_source_accessible(db, evidence.source, auth)
     return research_service.serialize_evidence(evidence)
 
 
 @router.get("/claims/{claim_id}", response_model=ClaimOut)
 def get_claim(
-    claim_id: str,
-    workspace_id: str | None = Header(default=None, alias="X-Workspace-Id"),
-    created_by: str | None = Header(default=None, alias="X-User-Id"),
+    claim_id: int,
+    auth: AuthContext = Depends(get_auth),
     db: Session = Depends(get_db),
 ) -> ClaimOut:
     claim = (
@@ -485,17 +542,16 @@ def get_claim(
     )
     if claim is None:
         raise HTTPException(status_code=404, detail="claim not found")
-    if not task_matches_scope(claim.task.workspace_id, claim.task.created_by, workspace_id, created_by):
+    if not auth.can_access(claim.task.workspace_id, claim.task.created_by):
         raise HTTPException(status_code=404, detail="claim not found")
     return research_service.serialize_claim(claim)
 
 
 @router.post("/claims/{claim_id}/review", response_model=ReviewDecisionOut, status_code=201)
 def review_claim(
-    claim_id: str,
+    claim_id: int,
     payload: ReviewDecisionCreate,
-    workspace_id: str | None = Header(default=None, alias="X-Workspace-Id"),
-    created_by: str | None = Header(default=None, alias="X-User-Id"),
+    auth: AuthContext = Depends(get_auth),
     db: Session = Depends(get_db),
 ) -> ReviewDecisionOut:
     claim = (
@@ -509,7 +565,7 @@ def review_claim(
     )
     if claim is None:
         raise HTTPException(status_code=404, detail="claim not found")
-    if not task_matches_scope(claim.task.workspace_id, claim.task.created_by, workspace_id, created_by):
+    if not auth.can_access(claim.task.workspace_id, claim.task.created_by):
         raise HTTPException(status_code=404, detail="claim not found")
 
     previous_status = claim.status
@@ -542,9 +598,8 @@ def review_claim(
 
 @router.post("/research-tasks/{task_id}/reports/regenerate", response_model=ReportOut, status_code=201)
 def regenerate_task_report(
-    task_id: str,
-    workspace_id: str | None = Header(default=None, alias="X-Workspace-Id"),
-    created_by: str | None = Header(default=None, alias="X-User-Id"),
+    task_id: int,
+    auth: AuthContext = Depends(get_auth),
     db: Session = Depends(get_db),
 ) -> ReportOut:
     task = (
@@ -558,7 +613,7 @@ def regenerate_task_report(
     )
     if task is None:
         raise HTTPException(status_code=404, detail="task not found")
-    if not task_matches_scope(task.workspace_id, task.created_by, workspace_id, created_by):
+    if not auth.can_access(task.workspace_id, task.created_by):
         raise HTTPException(status_code=404, detail="task not found")
     if not task.reports:
         raise HTTPException(status_code=409, detail="report regeneration requires an existing report")
@@ -579,9 +634,8 @@ def regenerate_task_report(
 
 @router.get("/reports/{report_id}")
 def get_report(
-    report_id: str,
-    workspace_id: str | None = Header(default=None, alias="X-Workspace-Id"),
-    created_by: str | None = Header(default=None, alias="X-User-Id"),
+    report_id: int,
+    auth: AuthContext = Depends(get_auth),
     db: Session = Depends(get_db),
 ):
     report = (
@@ -595,17 +649,16 @@ def get_report(
     )
     if report is None:
         raise HTTPException(status_code=404, detail="report not found")
-    if not task_matches_scope(report.task.workspace_id, report.task.created_by, workspace_id, created_by):
+    if not auth.can_access(report.task.workspace_id, report.task.created_by):
         raise HTTPException(status_code=404, detail="report not found")
     return report
 
 
 @router.post("/reports/{report_id}/export")
 def export_report(
-    report_id: str,
+    report_id: int,
     format: str = "markdown",
-    workspace_id: str | None = Header(default=None, alias="X-Workspace-Id"),
-    created_by: str | None = Header(default=None, alias="X-User-Id"),
+    auth: AuthContext = Depends(get_auth),
     db: Session = Depends(get_db),
 ):
     report = (
@@ -619,7 +672,7 @@ def export_report(
     )
     if report is None:
         raise HTTPException(status_code=404, detail="report not found")
-    if not task_matches_scope(report.task.workspace_id, report.task.created_by, workspace_id, created_by):
+    if not auth.can_access(report.task.workspace_id, report.task.created_by):
         raise HTTPException(status_code=404, detail="report not found")
     report_out = research_service.serialize_report_out(report)
     normalized_format = report_export.normalize_export_format(format)

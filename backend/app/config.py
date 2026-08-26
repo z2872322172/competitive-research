@@ -141,6 +141,11 @@ class Settings(BaseSettings):
 
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
+    # 鉴权隔离：strict 强制 JWT 登录 + 工作区成员校验；disabled 关闭鉴权（离线测试/演示用）。
+    auth_mode: str = Field(default="strict")
+    auth_token_secret: str = Field(default="verda-dev-secret-change-me")
+    auth_token_ttl_seconds: int = Field(default=86400, gt=0)
+
     search_provider: str = Field(default="tavily")
     tavily_api_key: str | None = None
     search_max_results: int = Field(default=5, ge=1, le=20)

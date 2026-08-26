@@ -29,7 +29,7 @@
 - [x] Redis 作为消息队列和任务结果存储
 - [x] LangGraph 作为后续 Agent 工作流编排方案
 - [x] SQLite 作为 MVP 默认数据库
-- [ ] MySQL 作为正式数据库
+- [x] MySQL 作为正式数据库
 - [ ] Elasticsearch 作为资料检索和全文搜索引擎
 - [ ] MinIO / S3 作为网页快照和报告文件存储
 - [x] Vue 作为前端技术栈
@@ -471,12 +471,14 @@ initialize_run
 
 ### 6.2 MySQL 和迁移
 
-- [ ] 从 SQLite 切换到 MySQL 的配置验证
-- [ ] 检查 SQLAlchemy 字段类型在 MySQL 下的兼容性
+- [x] 从 SQLite 切换到 MySQL 的配置验证
+- [x] 检查 SQLAlchemy 字段类型在 MySQL 下的兼容性
 - [ ] 完成数据库迁移脚本
 - [ ] 增加 MySQL 下的模型层测试
 - [ ] 增加迁移回归测试
 - [ ] 明确本地 SQLite 数据不作为生产事实库
+
+6.2 真实联调记录（2026-08-26，MySQL 192.168.150.101:3306/verda，utf8mb4）：`create_all` 建表 15 张，含全表/全字段中文注释（Navicat 等工具可直接查看）。兼容性检查发现并修复两处 SQLite 与 MySQL 行为差异：① `ORDER BY ... NULLS LAST` MySQL 8 不支持，改为 `(col IS NULL)` 前置排序（跨方言语义一致）；② MySQL `TEXT` 上限 64KB，LangGraph checkpoint 的 `state_json` 溢出报 `Data too long`，引入 `LargeText = Text().with_variant(MEDIUMTEXT, "mysql")` 应用于 6 个大 JSON 字段（checkpoint 三字段、事件 payload、运行/报告快照）。测试封闭性：新增 `tests/conftest.py` 在导入 app 前强制 SQLite + inline，本机 `.env` 配置真实 MySQL/Celery 后测试套件仍 98 passed。迁移脚本（Alembic 基线）已就绪但尚未在真实 MySQL 上走 Alembic 升级流程（当前用 create_all 建表），模型层/迁移回归测试待补。
 
 ### 6.3 Redis / Celery
 
@@ -527,7 +529,7 @@ initialize_run
 ### 阶段 6 验收标准
 
 - [ ] Docker Compose 可以启动前端、后端、MySQL、Redis、Celery、MinIO、Elasticsearch
-- [ ] 使用 MySQL 和 Celery 时，完整研究流程能跑通
+- [x] 使用 MySQL 和 Celery 时，完整研究流程能跑通（自增主键版本复验：任务经 API → Celery/Redis → 工作流 → MySQL 全链路完成，Tavily 真实检索入库 4 Sources / 12 Evidence / 4 Claims 全部绑定 Evidence，报告生成并成功导出，11 个节点 checkpoint 全部 succeeded）
 - [ ] HTML 快照和报告导出件可以进入 MinIO / S3
 - [ ] Evidence 可以进入 Elasticsearch 并支持检索
 - [ ] MySQL 是唯一事实库，ES 和对象存储都可以从事实数据重建
@@ -649,7 +651,7 @@ initialize_run
 - [x] 增加竞品对象管理
 - [x] 支持保存竞品官网、文档、定价页等常用来源
 - [x] 支持复用历史竞品研究结果
-- [ ] 增加权限和用户隔离
+- [x] 增加权限和用户隔离
 - [x] 增加组织 / workspace 概念
 
 7.7A MVP 说明：
@@ -663,7 +665,7 @@ initialize_run
 
 7.7C MVP 说明：
 - `ResearchTask` 已新增 `workspace_id`，创建任务时可传入 `workspace_id` 和 `created_by`，列表接口支持按 workspace / 用户过滤。
-- 当前是数据边界和查询隔离，尚未接入登录态、成员关系和强制鉴权，因此“权限和用户隔离”继续保留到后续阶段。
+- 7.7D（权限和用户隔离）：新增 `users` / `workspace_members` 表（自增主键）与 `/v1/auth/register|login|me` 接口；令牌为标准 HS256 JWT（标准库实现，零新依赖），密码 PBKDF2-SHA256 哈希。`AUTH_MODE=strict`（默认）下所有业务接口强制 Bearer 令牌，数据隔离按工作区成员关系判定：跨工作区任务/来源/证据/报告一律 404，伪造 X-Workspace-Id 返回 403，任务 created_by 由登录态强制覆盖不可伪造；`AUTH_MODE=disabled` 保留原离线演示行为。前端新增登录/注册面板（401 自动唤起）、令牌自动注入与退出登录。验收：后端 11 个隔离测试 + 真实 MySQL strict 模式 9 项手工验证全过。
 
 ### 阶段 7 验收标准
 

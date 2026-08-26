@@ -75,7 +75,7 @@ def check_minio(settings: Settings) -> CheckResult:
             secret_key=settings.minio_secret_key,
             bucket=settings.minio_bucket,
             secure=settings.minio_secure,
-        )
+        )._ensure_bucket_exists()
         return CheckResult("minio", required=True, ok=True, detail=f"bucket ready: {settings.minio_bucket}")
     except Exception as exc:
         return CheckResult("minio", required=True, ok=False, detail=str(exc))

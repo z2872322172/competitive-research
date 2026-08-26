@@ -32,6 +32,10 @@ import {
   X,
 } from 'lucide-vue-next'
 import {
+  apiLogin,
+  apiRegister,
+  apiWhoami,
+  buildAuthSession,
   cancelResearchTask,
   confirmResearchTask,
   createResearchTask,
@@ -54,6 +58,13 @@ import {
   type SourceSnapshotOut,
   type TaskDetailOut,
 } from './api'
+import {
+  clearAuthSession,
+  isUnauthorizedError,
+  loadAuthSession,
+  saveAuthSession,
+  type AuthUser,
+} from './auth.js'
 import {
   buildClarificationPlan,
   mergeSourcePreferences,
@@ -92,7 +103,7 @@ type NavItem = {
 }
 
 type ResearchTask = {
-  id?: string
+  id?: number
   title: string
   scope: string
   status: string
@@ -112,19 +123,19 @@ type ResearchTask = {
 type Evidence = EvidenceViewModel
 
 type Claim = {
-  id: string
+  id: number
   title: string
   target: string
   dimension: string
   status: ClaimStatus
   confidence: '高' | '中' | '低' | '冲突'
-  evidence: string[]
+  evidence: number[]
   detail: string
   includeInReport: boolean
   reviewDecision?: string | null
   reviewReason?: string | null
   reviewedAt?: string | null
-  evidenceSummaries?: { id: string; label: string }[]
+  evidenceSummaries?: { id: number; label: string }[]
   confidencePercent?: number
   coveragePercent?: number
   statusLabel?: string
@@ -160,7 +171,7 @@ type TimelineItem = {
 }
 
 type ReviewItem = {
-  claimId?: string
+  claimId?: number
   title: string
   kind: '冲突' | '低置信度' | '未披露'
   summary: string
@@ -170,7 +181,7 @@ type ReviewItem = {
   reviewDecision?: string | null
   reviewReason?: string | null
   reviewedAt?: string | null
-  evidenceSummaries?: { id: string; label: string }[]
+  evidenceSummaries?: { id: number; label: string }[]
   confidencePercent?: number
   coveragePercent?: number
   statusLabel?: string
@@ -190,8 +201,8 @@ const sourceSnapshots = ref<Record<string, SourceSnapshotOut>>({})
 const snapshotLoadingBySourceId = ref<Record<string, boolean>>({})
 const snapshotErrorsBySourceId = ref<Record<string, string>>({})
 const reviewReasons = ref<Record<string, string>>({})
-const selectedReviewClaimId = ref<string | null>(null)
-const draftTaskId = ref<string | null>(null)
+const selectedReviewClaimId = ref<number | null>(null)
+const draftTaskId = ref<number | null>(null)
 const selectedReportVersion = ref<number | null>(null)
 const clarificationQuestions = ref<ClarificationQuestion[]>([])
 const researchWeights = ref<ResearchWeight[]>([])
@@ -201,6 +212,53 @@ const isExporting = ref(false)
 const isRegeneratingReport = ref(false)
 const isBackendConnected = ref(false)
 const errorMessage = ref('')
+
+// ---------------------------------------------------------------------------
+// 登录态（后端 AUTH_MODE=strict 时需要登录；disabled 模式下自动跳过登录门）
+// ---------------------------------------------------------------------------
+const authUser = ref<AuthUser | null>(loadAuthSession()?.user ?? null)
+const authRequired = ref(false)
+const authFormMode = ref<'login' | 'register'>('login')
+const authUsername = ref('')
+const authPassword = ref('')
+const authWorkspace = ref('')
+const authError = ref('')
+const authSubmitting = ref(false)
+
+function requireLogin(message = '') {
+  clearAuthSession()
+  authUser.value = null
+  authError.value = message
+  authRequired.value = true
+}
+
+async function submitAuthForm() {
+  if (authSubmitting.value) return
+  authSubmitting.value = true
+  authError.value = ''
+  try {
+    const response =
+      authFormMode.value === 'register'
+        ? await apiRegister(authUsername.value.trim(), authPassword.value, authWorkspace.value.trim() || undefined)
+        : await apiLogin(authUsername.value.trim(), authPassword.value)
+    const session = buildAuthSession(response)
+    saveAuthSession(session)
+    authUser.value = session.user
+    authRequired.value = false
+    authPassword.value = ''
+    authWorkspace.value = ''
+    void loadTasks()
+    void loadCompetitors()
+  } catch (error) {
+    authError.value = error instanceof Error ? error.message : '登录失败，请稍后重试。'
+  } finally {
+    authSubmitting.value = false
+  }
+}
+
+function logout() {
+  requireLogin('已退出登录。')
+}
 const taskSearch = ref('')
 const taskStatusFilter = ref('all')
 const evidenceCompetitorFilter = ref('all')
@@ -337,8 +395,8 @@ const fallbackAuditEvents: AuditEvent[] = [
 
 const fallbackEvidences: Evidence[] = [
   {
-    id: 'S12',
-    sourceId: 'S12',
+    id: 12,
+    sourceId: 12,
     sourceType: 'official',
     type: '官方',
     title: 'Cursor Pricing',
@@ -356,8 +414,8 @@ const fallbackEvidences: Evidence[] = [
     snapshotHint: '本地 HTML 快照待接入读取接口',
   },
   {
-    id: 'S18',
-    sourceId: 'S18',
+    id: 18,
+    sourceId: 18,
     sourceType: 'docs',
     type: '文档',
     title: 'GitHub Copilot Business Docs',
@@ -375,8 +433,8 @@ const fallbackEvidences: Evidence[] = [
     snapshotHint: '本地 HTML 快照待接入读取接口',
   },
   {
-    id: 'S24',
-    sourceId: 'S24',
+    id: 24,
+    sourceId: 24,
     sourceType: 'community',
     type: '社区',
     title: 'Developers compare Trae and Cursor',
@@ -394,8 +452,8 @@ const fallbackEvidences: Evidence[] = [
     snapshotHint: '社交舆情快照待接入',
   },
   {
-    id: 'S31',
-    sourceId: 'S31',
+    id: 31,
+    sourceId: 31,
     sourceType: 'news',
     type: '新闻',
     title: 'AI coding assistants market update',
@@ -417,46 +475,46 @@ const fallbackEvidences: Evidence[] = [
 
 const fallbackClaims: Claim[] = [
   {
-    id: 'C1',
+    id: 1,
     title: 'Cursor 在企业协作和隐私控制上更成熟',
     target: 'Cursor',
     dimension: '技术能力',
     status: '已验证',
     confidence: '高',
-    evidence: ['S12', 'S18'],
+    evidence: [12, 18],
     detail: '官方价格页和文档均提到隐私模式、组织级策略和集中管理能力。',
     includeInReport: true,
   },
   {
-    id: 'C2',
+    id: 2,
     title: 'Trae 的企业版价格未公开披露',
     target: 'Trae',
     dimension: '定价策略',
     status: '未披露',
     confidence: '中',
-    evidence: ['S31'],
+    evidence: [31],
     detail: '公开官网、文档和新闻未检索到明确企业版价格，应在报告中标记为未披露。',
     includeInReport: true,
   },
   {
-    id: 'C3',
+    id: 3,
     title: 'Windsurf Pro 套餐价格存在来源冲突',
     target: 'Windsurf',
     dimension: '定价策略',
     status: '存在冲突',
     confidence: '冲突',
-    evidence: ['S12', 'S31'],
+    evidence: [12, 31],
     detail: '官网价格与较早第三方文章不一致，建议采用官网价格并标注旧来源已过期。',
     includeInReport: true,
   },
   {
-    id: 'C4',
+    id: 4,
     title: 'GitHub Copilot 的企业管理能力依托 GitHub 组织体系',
     target: 'GitHub Copilot',
     dimension: '生态能力',
     status: '已验证',
     confidence: '高',
-    evidence: ['S18'],
+    evidence: [18],
     detail: '官方文档显示其策略、席位和组织管理能力均围绕 GitHub 企业账户展开。',
     includeInReport: true,
   },
@@ -687,7 +745,7 @@ const reviewItems = computed<ReviewItem[]>(() => {
   if (!taskDetail.value) return fallbackReviewItems
   return buildReviewItems(taskDetail.value.claims, evidences.value) as ReviewItem[]
 })
-const activeReviewItem = computed(() => selectReviewItem(reviewItems.value, selectedReviewClaimId.value ?? '') ?? null)
+const activeReviewItem = computed(() => selectReviewItem(reviewItems.value, selectedReviewClaimId.value ?? undefined) ?? null)
 const activeReviewClaim = computed(() =>
   claims.value.find((claim) => claim.id === activeReviewItem.value?.claimId) ?? claims.value[0] ?? null,
 )
@@ -729,7 +787,7 @@ const canStart = computed(() =>
 const hasContinueResearchRequest = computed(() => taskDetail.value?.claims.some((claim) => claim.review_decision === 'continue_research') ?? false)
 const isReviewCompleted = computed(() => taskDetail.value?.task.status === 'completed')
 const activeTaskSummary = computed(() => (taskDetail.value ? (buildTaskSummary(taskDetail.value.task, taskDetail.value) as TaskSummary) : null))
-const runHistory = computed<RunHistoryItem[]>(() => (taskDetail.value ? getRunHistory(taskDetail.value.runs, taskDetail.value.task.current_run_id || taskDetail.value.latest_run?.id || '') : []))
+const runHistory = computed<RunHistoryItem[]>(() => (taskDetail.value ? getRunHistory(taskDetail.value.runs, taskDetail.value.task.current_run_id || taskDetail.value.latest_run?.id || undefined) : []))
 const taskRecoveryFeedback = computed(() => (taskDetail.value ? buildTaskRecoveryFeedback(taskDetail.value.task, taskDetail.value.latest_run) : null))
 const competitorRows = computed(() => buildCompetitorRows(competitorProfiles.value, fallbackCompetitorRows))
 const localCompetitorProfileReuse = computed(() =>
@@ -821,7 +879,7 @@ function addSourcePreference() {
   newSourcePreference.value = ''
 }
 
-function selectEvidence(evidenceId: string) {
+function selectEvidence(evidenceId: number | string) {
   selectedEvidence.value = visibleEvidences.value.find((item) => item.id === evidenceId) ?? visibleEvidences.value[0]
 }
 
@@ -921,7 +979,7 @@ function resetEvidenceFilters() {
   evidenceSourceTypeFilter.value = 'all'
 }
 
-function startPolling(taskId: string) {
+function startPolling(taskId: number) {
   stopPolling()
   pollingTimer = window.setInterval(async () => {
     if (pollingRequestInFlight) return
@@ -949,7 +1007,12 @@ async function loadTasks() {
     taskDetailsById.value = nextDetailsById
     isBackendConnected.value = true
     errorMessage.value = ''
-  } catch {
+  } catch (error) {
+    if (isUnauthorizedError(error)) {
+      // 后端处于强制鉴权模式：展示登录门，而不是退回本地演示数据。
+      requireLogin(error instanceof Error && error.message ? '请先登录后查看研究数据。' : '')
+      return
+    }
     isBackendConnected.value = false
     errorMessage.value = '后端暂未连接，当前展示本地原型数据。'
   }
@@ -973,14 +1036,14 @@ function clearTaskFilters() {
   void loadTasks()
 }
 
-async function loadTaskDetail(taskId: string): Promise<TaskDetailOut> {
+async function loadTaskDetail(taskId: number): Promise<TaskDetailOut> {
   taskDetail.value = await getResearchTask(taskId, buildEvidenceQuery(activeEvidenceFilters.value))
   taskDetailsById.value = { ...taskDetailsById.value, [taskId]: taskDetail.value }
   taskEvents.value = await listResearchEvents(taskId)
   prompt.value = taskDetail.value.task.prompt
   selectedReportVersion.value = taskDetail.value.reports.at(-1)?.version ?? null
   selectedEvidence.value = visibleEvidences.value[0] ?? null
-  selectedReviewClaimId.value = selectReviewItem(reviewItems.value, selectedReviewClaimId.value ?? '')?.claimId ?? null
+  selectedReviewClaimId.value = selectReviewItem(reviewItems.value, selectedReviewClaimId.value ?? undefined)?.claimId ?? null
   const nextPage = nextPageAfterTaskRefresh(taskDetail.value, currentPage.value)
   if (nextPage !== currentPage.value) currentPage.value = nextPage
   syncPollingState(taskDetail.value)
@@ -1267,7 +1330,21 @@ async function regenerateCurrentReport() {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
+  const session = loadAuthSession()
+  if (session?.token) {
+    try {
+      // 校验本地令牌仍有效（过期/被禁用则清除并进入登录门）。
+      const user = await apiWhoami()
+      saveAuthSession({ token: session.token, user })
+      authUser.value = user
+    } catch (error) {
+      if (isUnauthorizedError(error)) {
+        requireLogin('登录已过期，请重新登录。')
+        return
+      }
+    }
+  }
   void loadTasks()
   void loadCompetitors()
 })
@@ -1311,10 +1388,51 @@ onBeforeUnmount(stopPolling)
           <dd>92%</dd>
         </dl>
       </section>
+
+      <section v-if="authUser" class="auth-user" aria-label="当前登录用户">
+        <div class="auth-user-id">
+          <ShieldCheck :size="15" />
+          <span>{{ authUser.username }}</span>
+        </div>
+        <p class="auth-user-workspace">{{ authUser.workspaces[0]?.workspace_id ?? '-' }}</p>
+        <button class="auth-logout" type="button" @click="logout">退出登录</button>
+      </section>
     </aside>
 
     <main class="main-surface">
-      <p v-if="displayMessage" class="error-banner">{{ displayMessage }}</p>
+      <div v-if="authRequired" class="auth-gate">
+        <form class="auth-panel" @submit.prevent="submitAuthForm">
+          <h2>{{ authFormMode === 'login' ? '登录 Verda' : '注册新账号' }}</h2>
+          <p class="auth-hint">
+            {{ authFormMode === 'login' ? '输入账号密码进入你的研究工作区。' : '注册后自动创建个人工作区；填写共享工作区 ID 可加入团队。' }}
+          </p>
+          <label class="auth-field">
+            <span>用户名</span>
+            <input v-model="authUsername" type="text" autocomplete="username" required minlength="3" placeholder="username" />
+          </label>
+          <label class="auth-field">
+            <span>密码</span>
+            <input v-model="authPassword" type="password" autocomplete="current-password" required minlength="8" placeholder="至少 8 位" />
+          </label>
+          <label v-if="authFormMode === 'register'" class="auth-field">
+            <span>共享工作区 ID（可选）</span>
+            <input v-model="authWorkspace" type="text" placeholder="留空则创建个人工作区" />
+          </label>
+          <p v-if="authError" class="auth-error">{{ authError }}</p>
+          <button class="auth-submit" type="submit" :disabled="authSubmitting">
+            {{ authSubmitting ? '处理中…' : authFormMode === 'login' ? '登录' : '注册并登录' }}
+          </button>
+          <button
+            class="auth-switch"
+            type="button"
+            @click="authFormMode = authFormMode === 'login' ? 'register' : 'login'; authError = ''"
+          >
+            {{ authFormMode === 'login' ? '没有账号？注册一个' : '已有账号？直接登录' }}
+          </button>
+        </form>
+      </div>
+
+      <p v-if="displayMessage && !authRequired" class="error-banner">{{ displayMessage }}</p>
       <section v-if="currentPage === 'workspace'" class="workspace-page home-page">
         <header class="home-topline">
           <button class="feature-pill" type="button">
