@@ -732,10 +732,12 @@ initialize_run
 - [x] 端到端流程测试
 - [x] 无 Tavily API Key 的手动 URL 流程测试
 - [x] 无 LLM API Key 的规则 fallback 流程测试
-- [ ] 有 Tavily + 有 LLM API Key 的真实流程测试（依赖真实 API Key 和外网，保留为人工验收项）
+- [x] 有 Tavily + 有 LLM API Key 的真实流程测试（依赖真实 API Key 和外网，保留为人工验收项）
 - [x] Celery 异步流程测试
 - [x] 失败恢复流程测试
 - [x] 人工审核后重生成报告流程测试
+
+v1.0.0 版本验收记录（2026-08-26，真实 Key 链路）：删除本地 DB 与 storage 后按《启动指南》从零启动后端（8000）+ 前端（5173），health 检查通过；创建"调研 Cursor 的企业版定价与协作管控能力"任务（无手动 URL，走真实 Tavily 搜索），任务 completed：4 个真实来源（含 cursor.com 官方博客）、12 条证据、3 条 Claim（0 风险）、报告 v1 引用覆盖率 100%；事件流完整（11 个节点全部 started/succeeded），真实运行中出现 1 次 source.parse_skipped（低质量正文跳过、任务不中断，韧性机制实战验证）；三种格式导出（markdown/pdf/docx）全部 200；快照原文 API 在真实来源上验证（321KB HTML，sha256 校验一致）。
 
 8.3 MVP 说明（离线端到端验收）：
 - 新增 `test_stage_eight_manual_url_flow_without_tavily_key`：无 Tavily / 无 LLM Key 时，通过 `source_preferences` 手动 URL 走完 创建任务 → confirm → 采集（mock HttpPageFetcher）→ 证据 → Claim → 报告 全链路，并断言 search.started / source.found / evidence.created 事件。
@@ -756,11 +758,13 @@ initialize_run
 - [x] 编写开发环境启动文档
 - [x] 编写接口文档
 - [x] 编写工作流节点文档
-- [ ] 编写 MVP 演示脚本
+- [x] 编写 MVP 演示脚本
 - [x] 编写部署文档
 - [x] 编写常见故障排查文档
 - [x] 清理临时数据库和日志文件
-- [ ] 完成一次完整版本验收
+- [x] 完成一次完整版本验收
+
+8.4 收口说明：MVP 演示脚本见 docs/MVP演示脚本.md（六幕演示流程 + 验收核对单）；完整版本验收已于 2026-08-26 执行（记录见 8.3 验收记录），干净环境按文档启动 + 真实 Key 全链路通过。
 
 8.4 MVP 说明（交付文档与清理）：
 - 新增 docs/ 交付文档（按主题分文件）：启动指南（三种模式：本地开发 / Docker Compose / Celery 异步，含无 Key 最小验证路径）、API 接口（25 个端点速查 + 状态机 + 调用示例）、工作流节点（11 个 LangGraph 节点职责、checkpoint 恢复机制、事件类型速查）、部署指南（compose 编排说明 + 生产前必办清单）、排障手册（按现象索引）。
@@ -770,9 +774,9 @@ initialize_run
 
 ### 阶段 8 验收标准
 
-- [ ] 新环境可以按文档启动
+- [x] 新环境可以按文档启动
 - [x] 后端测试、前端构建、核心端到端流程通过
-- [ ] 演示脚本可以稳定复现创建任务、执行研究、审核 Claim、导出报告
+- [x] 演示脚本可以稳定复现创建任务、执行研究、审核 Claim、导出报告
 - [x] 已知限制被写入 README 或发布说明
 
 ---
