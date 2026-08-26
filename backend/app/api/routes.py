@@ -429,6 +429,24 @@ def get_source_snapshot(source_id: str, db: Session = Depends(get_db)) -> Source
     return snapshot
 
 
+@router.get("/sources/{source_id}/snapshot/raw")
+def get_source_snapshot_raw(source_id: str, db: Session = Depends(get_db)) -> Response:
+    status, artifact, data = research_service.read_source_snapshot_raw(db, source_id)
+    if status in {"source_not_found", "snapshot_not_found"}:
+        raise HTTPException(status_code=404, detail={"code": f"{status}", "message": "snapshot not found for this source"})
+    if status == "file_missing" or data is None or artifact is None:
+        raise HTTPException(status_code=404, detail={"code": "snapshot_file_missing", "message": "snapshot file is not available in artifact storage"})
+    return Response(
+        content=data,
+        media_type=artifact.content_type or "text/html; charset=utf-8",
+        headers={
+            "X-Artifact-Object-Key": artifact.object_key,
+            "X-Artifact-Sha256": artifact.sha256 or "",
+            "X-Artifact-Size": str(len(data)),
+        },
+    )
+
+
 @router.get("/evidence/{evidence_id}")
 def get_evidence(evidence_id: str, db: Session = Depends(get_db)):
     evidence = (

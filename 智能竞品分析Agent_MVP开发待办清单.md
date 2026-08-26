@@ -501,6 +501,8 @@ initialize_run
 
 6.4 MVP 说明：真实采集路径（collection）与报告导出（routes）本就走 ArtifactStorage 并记录元数据；本轮补齐 demo 播种路径——`write_demo_source_snapshot` 统一写入 HTML 快照到存储（object key 与真实路径同为 `snapshots/{task_id}/{source_id}.html`），SourceArtifact 的 sha256/size 记录真实快照字节，离线 demo 模式下证据 → 快照溯源链路可用（新增测试 `test_stage_six_demo_sources_persist_snapshots_in_artifact_storage`）。快照读取走 `GET /v1/sources/{id}/snapshot`，按 SourceArtifact.object_key 读取，缺失时稳定降级。"上传文件"当前产品无上传入口（来源仅 URL / 手动 URL），该项按 N/A 处理。
 
+6.4 补充（快照原文读取 API，为将来知识库按引用取回文件预留）：新增 `GET /v1/sources/{source_id}/snapshot/raw`，经 ArtifactStorage 返回快照原始字节，响应头携带 `X-Artifact-Object-Key` / `X-Artifact-Sha256` / `X-Artifact-Size`，调用方可对字节做 sha256 校验；来源不存在 / 无 artifact 记录 / 文件缺失分别返回稳定错误码（source_not_found / snapshot_not_found / snapshot_file_missing）。配合报告导出接口（POST `/reports/{id}/export`），外部系统（如个人知识库）可用 `object_key + sha256` 稳定引用并取回全部产物，存储后端切换（Local/MinIO/Fallback）对调用方透明。新增 2 条测试覆盖正常读取与三种 404 语义；顺带修复测试封闭性问题——直接构造 `Settings()` 会读取 backend/.env，涉及"无 Key"假设的测试显式传空 key，避免本机配置了 TAVILY_API_KEY 后测试发起真实外网搜索。
+
 ### 6.5 Elasticsearch
 
 - [x] 建立 Evidence 索引结构

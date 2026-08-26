@@ -1307,6 +1307,41 @@ def unavailable_source_snapshot(source_id: str, *, content_hash: str | None, obj
     )
 
 
+def read_source_snapshot_raw(db: Session, source_id: str) -> tuple[str, models.SourceArtifact | None, bytes | None]:
+    """读取来源快照原始字节。
+
+    返回 (status, artifact, data)：
+    - ("source_not_found", None, None)：来源不存在
+    - ("snapshot_not_found", None, None)：来源存在但没有快照 artifact 记录
+    - ("file_missing", artifact, None)：有记录但存储中文件缺失
+    - ("ok", artifact, data)：正常读取
+    """
+    source = (
+        db.execute(
+            select(models.Source)
+            .where(models.Source.id == source_id)
+            .options(selectinload(models.Source.artifacts))
+        )
+        .scalars()
+        .first()
+    )
+    if source is None:
+        return "source_not_found", None, None
+
+    artifact = next((item for item in source.artifacts if item.artifact_type == "html_snapshot"), None)
+    if artifact is None:
+        return "snapshot_not_found", None, None
+
+    storage = build_artifact_storage(get_settings())
+    try:
+        data = storage.read_bytes(artifact.object_key)
+    except (FileNotFoundError, ValueError):
+        return "file_missing", artifact, None
+    except httpx.HTTPStatusError:
+        return "file_missing", artifact, None
+    return "ok", artifact, data
+
+
 def serialize_claim(claim: models.Claim) -> ClaimOut:
     latest_review = max(claim.review_decisions, key=lambda item: item.created_at, default=None)
     return ClaimOut(

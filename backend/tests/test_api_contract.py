@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+import hashlib
 import json
 import pytest
 from sqlalchemy.exc import IntegrityError
@@ -415,6 +416,105 @@ def test_stage_six_demo_sources_persist_snapshots_in_artifact_storage(monkeypatc
         snapshot_dir = tmp_path / "snapshots" / task["id"]
         assert snapshot_dir.exists()
         assert list(snapshot_dir.glob("*.html"))
+
+    get_settings.cache_clear()
+
+
+def test_stage_six_source_snapshot_raw_returns_file_bytes(monkeypatch, tmp_path):
+    monkeypatch.setenv("ARTIFACT_STORAGE_DIR", str(tmp_path))
+    get_settings.cache_clear()
+
+    with TestClient(app) as client:
+        client.delete("/v1/dev/demo-data")
+        task = client.post(
+            "/v1/research-tasks",
+            json={
+                "prompt": "Analyze Cursor pricing and enterprise controls",
+                "competitors": ["Cursor"],
+                "dimensions": ["pricing"],
+            },
+        ).json()
+        client.post(f"/v1/research-tasks/{task['id']}/confirm")
+
+        detail = client.get(f"/v1/research-tasks/{task['id']}").json()
+        source = detail["sources"][0]
+        response = client.get(f"/v1/sources/{source['id']}/snapshot/raw")
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/html")
+        object_key = response.headers["x-artifact-object-key"]
+        assert object_key == f"snapshots/{task['id']}/{source['id']}.html"
+        body = response.content
+        assert body.startswith(b"<!doctype html>")
+        assert source["title"].encode("utf-8") in body
+        assert response.headers["x-artifact-size"] == str(len(body))
+        assert hashlib.sha256(body).hexdigest() == response.headers["x-artifact-sha256"]
+
+        stored_file = tmp_path / "snapshots" / task["id"] / f"{source['id']}.html"
+        assert stored_file.read_bytes() == body
+
+    get_settings.cache_clear()
+
+
+def test_stage_six_source_snapshot_raw_error_semantics(monkeypatch, tmp_path):
+    monkeypatch.setenv("ARTIFACT_STORAGE_DIR", str(tmp_path))
+    get_settings.cache_clear()
+
+    with TestClient(app) as client:
+        client.delete("/v1/dev/demo-data")
+        db = SessionLocal()
+        try:
+            task = models.ResearchTask(title="Raw snapshot errors", prompt="Research raw snapshot errors")
+            db.add(task)
+            db.flush()
+
+            source_without_artifact = models.Source(
+                task_id=task.id,
+                url="https://example.com/no-artifact",
+                canonical_url="https://example.com/no-artifact",
+                source_type="docs",
+                title="No Artifact",
+                publisher="Example",
+                content_hash="noart123",
+            )
+            db.add(source_without_artifact)
+            db.flush()
+
+            source_missing_file = models.Source(
+                task_id=task.id,
+                url="https://example.com/missing-file",
+                canonical_url="https://example.com/missing-file",
+                source_type="docs",
+                title="Missing File",
+                publisher="Example",
+                content_hash="miss123",
+            )
+            db.add(source_missing_file)
+            db.flush()
+            db.add(
+                models.SourceArtifact(
+                    source_id=source_missing_file.id,
+                    artifact_type="html_snapshot",
+                    object_key=f"snapshots/{task.id}/{source_missing_file.id}.html",
+                    sha256="miss123",
+                )
+            )
+            db.commit()
+            no_artifact_id = source_without_artifact.id
+            missing_file_id = source_missing_file.id
+        finally:
+            db.close()
+
+        unknown = client.get("/v1/sources/src_unknown/snapshot/raw")
+        no_artifact = client.get(f"/v1/sources/{no_artifact_id}/snapshot/raw")
+        missing_file = client.get(f"/v1/sources/{missing_file_id}/snapshot/raw")
+
+        assert unknown.status_code == 404
+        assert unknown.json()["error"]["code"] == "source_not_found"
+        assert no_artifact.status_code == 404
+        assert no_artifact.json()["error"]["code"] == "snapshot_not_found"
+        assert missing_file.status_code == 404
+        assert missing_file.json()["error"]["code"] == "snapshot_file_missing"
 
     get_settings.cache_clear()
 
@@ -3599,7 +3699,7 @@ def test_stage_three_manual_urls_work_without_tavily_api_key(monkeypatch, tmp_pa
     db = SessionLocal()
     try:
         manual_adapter = build_search_adapter(
-            Settings(search_provider="tavily", artifact_storage_dir=str(tmp_path)),
+            Settings(search_provider="tavily", tavily_api_key="", artifact_storage_dir=str(tmp_path)),
             manual_urls=["https://manual.example/source"],
         )
         assert manual_adapter.search("Cursor manual URL flow", max_results=1)[0].url == "https://manual.example/source"
@@ -3617,7 +3717,7 @@ def test_stage_three_manual_urls_work_without_tavily_api_key(monkeypatch, tmp_pa
         discovery = collection.discover_research_sources(
             db,
             task=task,
-            settings=Settings(search_provider="tavily", artifact_storage_dir=str(tmp_path)),
+            settings=Settings(search_provider="tavily", tavily_api_key="", artifact_storage_dir=str(tmp_path)),
             write_event=lambda *args, **kwargs: None,
         )
 
@@ -3631,7 +3731,7 @@ def test_stage_three_manual_urls_work_without_tavily_api_key(monkeypatch, tmp_pa
 
 
 def test_stage_four_build_llm_extractor_is_optional_without_api_key():
-    assert llm.build_llm_extractor(Settings(search_provider="test")) is None
+    assert llm.build_llm_extractor(Settings(search_provider="test", llm_api_key="")) is None
 
 
 def test_stage_four_build_llm_extractor_enables_openai_compatible_with_api_key():

@@ -37,6 +37,7 @@
 |---|---|---|
 | GET | `/sources/{source_id}` | 来源详情 |
 | GET | `/sources/{source_id}/snapshot` | HTML 快照内容（证据溯源） |
+| GET | `/sources/{source_id}/snapshot/raw` | 快照原始文件字节流；响应头 `X-Artifact-Object-Key` / `X-Artifact-Sha256` / `X-Artifact-Size`，sha256 可校验完整性（知识库/外部系统按引用取回文件的入口） |
 | GET | `/evidence/{evidence_id}` | 证据详情（含定位信息） |
 
 ## Claim 审核
