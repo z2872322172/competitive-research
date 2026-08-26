@@ -49,7 +49,7 @@ PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
         "artifact_storage_backend": "local",
     },
     "prod": {
-        "database_url": "mysql+pymysql://verda:verda@mysql:3306/verda",
+        "database_url": "mysql+pymysql://verda:verda@mysql:3306/verda?charset=utf8mb4",
         "redis_url": "redis://redis:6379/0",
         "celery_broker_url": "redis://redis:6379/0",
         "celery_result_backend": "redis://redis:6379/1",
@@ -184,7 +184,10 @@ class Settings(BaseSettings):
         if os.getenv("DATABASE_URL") is None and mysql_fields.intersection(os.environ):
             user = quote_plus(self.mysql_user)
             password = quote_plus(self.mysql_password)
-            self.database_url = f"mysql+pymysql://{user}:{password}@{self.mysql_host}:{self.mysql_port}/{self.mysql_database}"
+            url = f"mysql+pymysql://{user}:{password}@{self.mysql_host}:{self.mysql_port}/{self.mysql_database}"
+            if "charset=" not in url:
+                url += "?charset=utf8mb4"
+            self.database_url = url
 
         redis_fields = {"REDIS_HOST", "REDIS_PORT", "REDIS_DB", "CELERY_RESULT_DB"}
         if redis_fields.intersection(os.environ):

@@ -693,7 +693,7 @@ def test_stage_six_environment_profiles_apply_runtime_defaults(monkeypatch):
     get_settings.cache_clear()
     prod_settings = get_settings()
     assert prod_settings.environment == "prod"
-    assert prod_settings.database_url == "mysql+pymysql://verda:verda@mysql:3306/verda"
+    assert prod_settings.database_url == "mysql+pymysql://verda:verda@mysql:3306/verda?charset=utf8mb4"
     assert prod_settings.task_mode == "celery"
     assert prod_settings.redis_url == "redis://redis:6379/0"
     assert prod_settings.celery_result_backend == "redis://redis:6379/1"
@@ -762,7 +762,7 @@ def test_stage_six_middleware_ip_overrides_are_composed_from_env(monkeypatch):
 
     try:
         settings = get_settings()
-        assert settings.database_url == "mysql+pymysql://research:secret@10.10.0.12:3307/verda_prod"
+        assert settings.database_url == "mysql+pymysql://research:secret@10.10.0.12:3307/verda_prod?charset=utf8mb4"
         assert settings.redis_url == "redis://10.10.0.13:6380/4"
         assert settings.celery_broker_url == "redis://10.10.0.13:6380/4"
         assert settings.celery_result_backend == "redis://10.10.0.13:6380/5"
