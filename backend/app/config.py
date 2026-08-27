@@ -168,6 +168,11 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = Field(default=30.0, gt=0)
     llm_max_evidence_items: int = Field(default=8, ge=1, le=30)
 
+    # Langfuse 全链路可观测：三项齐配才启用，否则全部 no-op（离线运行不受影响）。
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+    langfuse_host: str = ""
+
     def model_post_init(self, __context: Any) -> None:
         explicit_profile = os.getenv("APP_ENV") or os.getenv("ENVIRONMENT")
         profile = normalize_environment(explicit_profile or self.environment)

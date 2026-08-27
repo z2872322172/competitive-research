@@ -12,3 +12,4 @@ trafilatura==2.1.0
 langgraph==0.6.5
 python-docx==1.2.0
 reportlab==5.0.0
+langfuse==2.60.10

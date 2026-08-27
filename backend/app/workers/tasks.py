@@ -1,4 +1,5 @@
 from app.db import SessionLocal
+from app.services import observability
 from app.workflows.research_graph import run_research_workflow
 from app.workflows.research_graph import latest_success_checkpoint
 from app.workers.celery_app import celery_app
@@ -13,3 +14,5 @@ def run_research_task(run_id: int, resume: bool = False) -> int:
         return run_id
     finally:
         db.close()
+        # worker 常驻，冲刷 Langfuse 缓冲，保证本任务的 trace 及时落库。
+        observability.flush()

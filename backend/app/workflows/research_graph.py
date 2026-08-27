@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from time import perf_counter
 from time import sleep
 from typing import Any, Callable, TypedDict
@@ -6,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.config import get_settings
+from app.services import observability
 from app.services import research_service
 from app.services.collection import CollectionSummary, FetchedSource, ParsedSource, SourceDiscovery
 from app.services.collection import (
@@ -492,6 +494,7 @@ def instrument_node(
         ensure_not_canceled(db, run_id=state["run_id"], node_name=node_name, input_summary=input_summary)
         max_attempts = RETRYABLE_NODES.get(node_name, 1)
         retry_count = 0
+        node_started_wall = datetime.now(timezone.utc)
         for attempt in range(1, max_attempts + 1):
             append_node_event(
                 db,
@@ -540,6 +543,15 @@ def instrument_node(
                     output_summary={"retryable": retryable},
                     error=str(exc),
                 )
+                observability.record_node_span(
+                    node_name=node_name,
+                    status="failed",
+                    started_at=node_started_wall,
+                    duration_ms=int((perf_counter() - started_at) * 1000),
+                    input_summary=input_summary,
+                    output_summary={"retryable": retryable},
+                    error=str(exc),
+                )
                 raise
             break
 
@@ -549,6 +561,14 @@ def instrument_node(
             run_id=state["run_id"],
             event_type="node.succeeded",
             node_name=node_name,
+            duration_ms=int((perf_counter() - started_at) * 1000),
+            input_summary=input_summary,
+            output_summary=output_summary,
+        )
+        observability.record_node_span(
+            node_name=node_name,
+            status="succeeded",
+            started_at=node_started_wall,
             duration_ms=int((perf_counter() - started_at) * 1000),
             input_summary=input_summary,
             output_summary=output_summary,
@@ -997,11 +1017,23 @@ def run_research_workflow(db: Session, run_id: int, delay_seconds: float = 0.0, 
         initial_state = rebuild_resume_state(db, run, task, checkpoint)
 
     graph = build_research_graph(db=db, delay_seconds=delay_seconds, start_at=start_node)
+    observability.start_run_trace(
+        run_id=run.id,
+        task_id=task.id,
+        prompt=task.prompt,
+        scope=decode_json(run.input_snapshot_json),
+    )
     try:
         graph.invoke(initial_state)
     except WorkflowCanceled:
         db.refresh(run)
+        observability.end_run_trace(status=run.status or "canceled")
         return run
+    except Exception as exc:
+        db.refresh(run)
+        observability.end_run_trace(status=run.status or "failed", output={"error": str(exc)})
+        raise
 
     db.refresh(run)
+    observability.end_run_trace(status=run.status or "unknown")
     return run

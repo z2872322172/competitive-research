@@ -1,11 +1,14 @@
 import json
 import re
+from datetime import datetime, timezone
+from time import perf_counter
 from typing import Any
 from typing import Protocol
 
 import httpx
 
 from app.config import Settings
+from app.services import observability
 from app.services.analysis.schemas import CLAIM_EXTRACTION_JSON_SCHEMA, ClaimExtractionResult
 
 
@@ -54,11 +57,35 @@ class OpenAICompatibleClaimExtractor:
             },
         }
         headers = {"Authorization": f"Bearer {self.api_key}"}
-        with httpx.Client(timeout=self.timeout_seconds) as client:
-            response = client.post(f"{self.base_url}/chat/completions", json=payload, headers=headers)
-            response.raise_for_status()
-            body = response.json()
+        started_wall = datetime.now(timezone.utc)
+        started_at = perf_counter()
+        try:
+            with httpx.Client(timeout=self.timeout_seconds) as client:
+                response = client.post(f"{self.base_url}/chat/completions", json=payload, headers=headers)
+                response.raise_for_status()
+                body = response.json()
+        except Exception as exc:
+            observability.record_generation(
+                name="claim_extraction",
+                model=self.model,
+                input_messages=messages,
+                started_at=started_wall,
+                duration_ms=int((perf_counter() - started_at) * 1000),
+                error=str(exc),
+            )
+            raise
+        duration_ms = int((perf_counter() - started_at) * 1000)
         content = body["choices"][0]["message"]["content"]
+        observability.record_generation(
+            name="claim_extraction",
+            model=self.model,
+            input_messages=messages,
+            output_content=content,
+            usage=body.get("usage"),
+            started_at=started_wall,
+            duration_ms=duration_ms,
+            metadata_extra={"evidence_count": len(evidence_payload)},
+        )
         return parse_claim_extraction_content(content)
 
 
