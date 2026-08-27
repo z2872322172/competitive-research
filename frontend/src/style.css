@@ -3183,11 +3183,16 @@ blockquote {
 /* ---------------------------------------------------------------------------
  * 登录门与用户信息（鉴权隔离）
  * ------------------------------------------------------------------------- */
+/* 登录模式：侧栏隐藏，整页只渲染登录门 */
+.app-shell.auth-mode {
+  grid-template-columns: 1fr;
+}
+
 .auth-gate {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 60vh;
+  min-height: 100vh;
   padding: 32px 16px;
 }
 

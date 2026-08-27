@@ -1352,8 +1352,8 @@ onBeforeUnmount(stopPolling)
 </script>
 
 <template>
-  <div class="app-shell">
-    <aside class="sidebar">
+  <div class="app-shell" :class="{ 'auth-mode': authRequired }">
+    <aside v-if="!authRequired" class="sidebar">
       <button class="brand-row" type="button" @click="go('workspace')">
         <span class="brand-mark"><Sparkles :size="18" /></span>
         <span>Verda</span>
@@ -1432,7 +1432,8 @@ onBeforeUnmount(stopPolling)
         </form>
       </div>
 
-      <p v-if="displayMessage && !authRequired" class="error-banner">{{ displayMessage }}</p>
+      <template v-else>
+      <p v-if="displayMessage" class="error-banner">{{ displayMessage }}</p>
       <section v-if="currentPage === 'workspace'" class="workspace-page home-page">
         <header class="home-topline">
           <button class="feature-pill" type="button">
@@ -2421,9 +2422,10 @@ onBeforeUnmount(stopPolling)
           </article>
         </div>
       </section>
+      </template>
     </main>
 
-    <aside v-if="currentPage === 'run' && selectedEvidence" class="floating-evidence">
+    <aside v-if="!authRequired && currentPage === 'run' && selectedEvidence" class="floating-evidence">
       <button class="close-button" type="button" title="关闭" @click="selectedEvidence = null"><X :size="17" /></button>
       <span class="source-badge" :class="selectedEvidence.type">{{ selectedEvidence.type }}</span>
       <h2>{{ selectedEvidence.id }} · {{ selectedEvidence.title }}</h2>
