@@ -697,11 +697,11 @@ initialize_run
 
 ### 8.1 后端测试
 
-- [ ] 后端单元测试
-- [x] API 合约测试
-- [ ] 数据库测试
-- [ ] 工作流节点测试
-- [ ] LangGraph 集成测试
+- [x] 后端单元测试（test_unit_services.py：32 项——fetcher/robots/parser/LLM 输出校验/claim 抽取/规则降级/重试策略/ArtifactStorage/环境配置/社交采集适配）
+- [x] API 合约测试（test_api_contract.py：22 项——请求响应结构/过滤/快照/导出/竞品/工作区隔离）
+- [x] 数据库测试（test_mysql_model_layer.py：真实 MySQL 6 项 + SQLite 全套契约测试；鉴权数据隔离 test_auth_isolation.py 11 项）
+- [x] 工作流节点测试（test_workflow_nodes.py：26 项——节点生命周期事件/checkpoint 保存与恢复/节点重试边界/review 门控/取消与独立失败边界）
+- [x] LangGraph 集成测试（test_langgraph_e2e.py：15 项——demo 全链路/无 Key 双降级链路/后台执行与 review 闭环/Celery 入队与自动恢复/rerun 与 resume）
 - [x] Celery 任务测试
 - [x] LLM 输出校验测试
 - [x] 搜索 / 抓取 / 解析失败场景测试
@@ -709,9 +709,11 @@ initialize_run
 - [x] 失败重试测试
 - [x] 报告导出测试
 
+2026-08-27 测试组织收口：test_api_contract.py（95 项大文件）按模块拆分为 unit/workflow_nodes/langgraph_e2e 三类 + 保留契约类，拆分后全量 109 passed + 6 skipped（MySQL 门控）无回归。
+
 ### 8.2 前端测试
 
-- [ ] 前端组件测试
+- [x] 前端组件测试（src/*.test.mjs 共 88 项 node:test：App 组件状态机/researchStates/review 流程/competitors/api 层降级，vue-tsc 类型检查零错误）
 - [x] 前端构建测试
 - [x] API 失败状态测试
 - [x] 空数据状态测试
