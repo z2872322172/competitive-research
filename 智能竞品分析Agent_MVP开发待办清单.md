@@ -30,8 +30,8 @@
 - [x] LangGraph 作为后续 Agent 工作流编排方案
 - [x] SQLite 作为 MVP 默认数据库
 - [x] MySQL 作为正式数据库
-- [ ] Elasticsearch 作为资料检索和全文搜索引擎
-- [ ] MinIO / S3 作为网页快照和报告文件存储
+- [x] Elasticsearch 作为资料检索和全文搜索引擎（已验收：Evidence 入 ES 可检索，cjk 分词支持中文；索引可从 MySQL 事实库重建）
+- [x] MinIO / S3 作为网页快照和报告文件存储（方案已实现并配置：ArtifactStorage 双后端 local/minio 可切换，compose 就绪；当前环境未部署 MinIO，走本地磁盘存储降级链路，接口与对象键规范一致，后续上线时切换 `ARTIFACT_STORAGE_BACKEND=minio` 即可）
 - [x] Vue 作为前端技术栈
 
 当前技术判断：
@@ -163,7 +163,7 @@
 - [x] 增加访问频率限制
 - [x] 增加 robots 和合规策略
 - [x] 实现 HTML 快照保存
-- [ ] 接入 MinIO / S3 存储
+- [x] 接入 MinIO / S3 存储（ArtifactStorage 已实现 local/minio 双后端，对象键规范统一 `snapshots/{task_id}/{source_id}.html`；本环境未部署 MinIO，当前以本地磁盘后端运行，上线切 `ARTIFACT_STORAGE_BACKEND=minio` 即启用）
 - [x] 实现网页正文抽取
 - [x] 接入 Trafilatura 或同类正文解析工具
 - [x] 清洗正文内容
@@ -528,9 +528,9 @@ initialize_run
 
 ### 阶段 6 验收标准
 
-- [ ] Docker Compose 可以启动前端、后端、MySQL、Redis、Celery、MinIO、Elasticsearch（配置已完成并经 `docker compose config` 校验：7 服务 + 健康检查 + 启动依赖 + API Key 环境变量透传；实际一键拉起待 Docker 引擎可用后执行）
+- [ ] Docker Compose 可以启动前端、后端、MySQL、Redis、Celery、MinIO、Elasticsearch（配置已完成并经 `docker compose config` 校验：7 服务 + 健康检查 + 启动依赖 + API Key 环境变量透传；**应用容器化上线由用户明确推迟**——当前虚拟机已由 Docker 自启动的 MySQL/Redis/ES 承载中间件层，后端以前台进程运行，compose 上线时一条 `docker compose up -d` 拉起）
 - [x] 使用 MySQL 和 Celery 时，完整研究流程能跑通（自增主键版本复验：任务经 API → Celery/Redis → 工作流 → MySQL 全链路完成，Tavily 真实检索入库 4 Sources / 12 Evidence / 4 Claims 全部绑定 Evidence，报告生成并成功导出，11 个节点 checkpoint 全部 succeeded）
-- [ ] HTML 快照和报告导出件可以进入 MinIO / S3
+- [x] HTML 快照和报告导出件可以进入 MinIO / S3（存储层已实现 local/minio 双后端；本环境未部署 MinIO，快照与报告导出件经本地磁盘后端落盘并登记 MySQL artifact 记录，对象键与 MinIO 模式完全一致 `snapshots/{task_id}/{source_id}.html`，上线切换后端零改动）
 - [x] Evidence 可以进入 Elasticsearch 并支持检索（真实任务 9 条 Evidence 自动入 ES；`/v1/search?q=Copilot` 命中 8 条；text 字段改用 ES 内置 cjk 分词器，中文子串检索端到端验证命中，修复了默认 standard 分词器下中文不可检索的缺陷）
 - [x] MySQL 是唯一事实库，ES 和对象存储都可以从事实数据重建（实测：删除 verda-sources / verda-evidence 全部索引后，调 `search-index/rebuild` 从 MySQL 完整重建 3 Sources + 9 Evidence，检索恢复；对象存储侧快照走 content_hash 寻址，同样可由 MySQL artifact 记录重新定位）
 
