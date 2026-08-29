@@ -21,11 +21,14 @@ def utc_now() -> datetime:
 
 class TaskStatus(str, Enum):
     draft = "draft"
+    clarifying = "clarifying"
     confirmed = "confirmed"
     queued = "queued"
     running = "running"
+    waiting_input = "waiting_input"
     waiting_review = "waiting_review"
     completed = "completed"
+    completed_with_limitations = "completed_with_limitations"
     failed = "failed"
     canceled = "canceled"
 
@@ -35,12 +38,14 @@ class RunStatus(str, Enum):
     running = "running"
     waiting_review = "waiting_review"
     completed = "completed"
+    completed_with_limitations = "completed_with_limitations"
     failed = "failed"
     canceled = "canceled"
 
 
 class ClaimStatus(str, Enum):
     verified = "verified"
+    corroborated = "corroborated"
     low_confidence = "low_confidence"
     conflict = "conflict"
     undisclosed = "undisclosed"
@@ -55,7 +60,7 @@ class ResearchTask(Base):
     title: Mapped[str] = mapped_column(String(255), comment="任务标题（由需求解析生成）")
     prompt: Mapped[str] = mapped_column(Text, comment="用户原始需求描述")
     scope_json: Mapped[str] = mapped_column(Text, default="{}", comment="结构化研究范围 JSON：竞品/维度/检索策略等")
-    status: Mapped[str] = mapped_column(String(40), default=TaskStatus.draft.value, index=True, comment="任务状态：draft/confirmed/queued/running/waiting_review/completed/failed/canceled")
+    status: Mapped[str] = mapped_column(String(40), default=TaskStatus.draft.value, index=True, comment="任务状态：draft/clarifying/confirmed/queued/running/waiting_input/waiting_review/completed/completed_with_limitations/failed/canceled")
     workspace_id: Mapped[str] = mapped_column(String(40), default="default", index=True, comment="工作空间ID（数据隔离边界）")
     current_run_id: Mapped[int | None] = mapped_column(AutoId, nullable=True, index=True, comment="当前执行批次ID，指向 task_runs.id")
     failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True, comment="任务失败原因（失败时填写）")
@@ -96,7 +101,7 @@ class TaskRun(Base):
 
     id: Mapped[int] = mapped_column(AutoId, primary_key=True, autoincrement=True, comment="运行批次ID（自增主键）")
     task_id: Mapped[int] = mapped_column(AutoId, ForeignKey("research_tasks.id"), index=True, comment="所属任务ID")
-    status: Mapped[str] = mapped_column(String(40), default=RunStatus.queued.value, index=True, comment="运行状态：queued/running/waiting_review/completed/failed/canceled")
+    status: Mapped[str] = mapped_column(String(40), default=RunStatus.queued.value, index=True, comment="运行状态：queued/running/waiting_review/completed/completed_with_limitations/failed/canceled")
     current_stage: Mapped[str] = mapped_column(String(80), default="queued", comment="当前执行到的阶段/节点名")
     iteration_count: Mapped[int] = mapped_column(Integer, default=0, comment="迭代轮次（补充检索用）")
     priority: Mapped[int] = mapped_column(Integer, default=5, comment="执行优先级，数值越小越先执行")
@@ -240,7 +245,7 @@ class Claim(Base):
     value_json: Mapped[str] = mapped_column(Text, default="{}", comment="结论值 JSON")
     claim_type: Mapped[str] = mapped_column(String(80), index=True, comment="结论类型：pricing/feature/integration/risk 等")
     dimension: Mapped[str] = mapped_column(String(120), default="general", index=True, comment="所属研究维度")
-    status: Mapped[str] = mapped_column(String(40), default=ClaimStatus.needs_evidence.value, index=True, comment="审核状态：verified/low_confidence/conflict/undisclosed/needs_evidence")
+    status: Mapped[str] = mapped_column(String(40), default=ClaimStatus.needs_evidence.value, index=True, comment="审核状态：verified/corroborated/low_confidence/conflict/undisclosed/needs_evidence")
     confidence: Mapped[str] = mapped_column(String(40), default="medium", comment="置信级别：high/medium/low")
     confidence_score: Mapped[float] = mapped_column(Float, default=0.5, comment="置信分 0-1")
     display_text: Mapped[str] = mapped_column(Text, comment="结论展示文本（报告引用用）")

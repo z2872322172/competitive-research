@@ -2,8 +2,7 @@ import json
 import re
 from datetime import datetime, timezone
 from time import perf_counter
-from typing import Any
-from typing import Protocol
+from typing import Any, Protocol
 
 import httpx
 
@@ -21,49 +20,46 @@ class LLMUnavailable(RuntimeError):
     pass
 
 
+RESPONSE_FORMAT_ERROR_MARKERS = (
+    "response_format",
+    "unavailable now",
+)
+
+JSON_OBJECT_OUTPUT_CONTRACT = (
+    "Respond with a single json object: "
+    '{"claims": [{"evidence_id": int, "subject": str, "predicate": str, "value": {}, '
+    '"claim_type": "pricing|feature|positioning|strength|weakness|market_update|general", '
+    '"dimension": str, "status": "verified|low_confidence|undisclosed|needs_evidence", '
+    '"confidence": "high|medium|low", "confidence_score": 0.0-1.0, '
+    '"display_text": str, "relation": "supports|context"}]}'
+)
+
+
 class OpenAICompatibleClaimExtractor:
-    def __init__(self, *, api_key: str, base_url: str, model: str, timeout_seconds: float) -> None:
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        base_url: str,
+        model: str,
+        timeout_seconds: float,
+        disable_thinking: bool = False,
+    ) -> None:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout_seconds = timeout_seconds
+        self.disable_thinking = disable_thinking
+        # 部分兼容服务（如 DeepSeek）不支持 json_schema strict 模式，首次 400 后降级为 json_object。
+        self._use_json_object = False
 
     def extract_claims(self, *, prompt: str, evidence_payload: list[dict]) -> ClaimExtractionResult:
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "You extract concise, verifiable competitive-research claims from evidence. "
-                    "Every claim must cite exactly one supplied evidence_id. "
-                    "Do not invent facts that are not present in the evidence."
-                ),
-            },
-            {
-                "role": "user",
-                "content": json.dumps({"research_prompt": prompt, "evidence": evidence_payload}, ensure_ascii=False),
-            },
-        ]
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": 0,
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "claim_extraction_result",
-                    "schema": CLAIM_EXTRACTION_JSON_SCHEMA,
-                    "strict": True,
-                },
-            },
-        }
+        messages = self._build_messages(prompt=prompt, evidence_payload=evidence_payload)
         headers = {"Authorization": f"Bearer {self.api_key}"}
         started_wall = datetime.now(timezone.utc)
         started_at = perf_counter()
         try:
-            with httpx.Client(timeout=self.timeout_seconds) as client:
-                response = client.post(f"{self.base_url}/chat/completions", json=payload, headers=headers)
-                response.raise_for_status()
-                body = response.json()
+            body = self._request_with_fallback(messages, headers)
         except Exception as exc:
             observability.record_generation(
                 name="claim_extraction",
@@ -84,9 +80,73 @@ class OpenAICompatibleClaimExtractor:
             usage=body.get("usage"),
             started_at=started_wall,
             duration_ms=duration_ms,
-            metadata_extra={"evidence_count": len(evidence_payload)},
+            metadata_extra={
+                "evidence_count": len(evidence_payload),
+                "response_format": "json_object" if self._use_json_object else "json_schema",
+            },
         )
         return parse_claim_extraction_content(content)
+
+    def _request_with_fallback(self, messages: list[dict], headers: dict) -> dict:
+        try:
+            return self._request(messages, headers)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 400 and not self._use_json_object:
+                detail = exc.response.text or ""
+                if any(marker in detail for marker in RESPONSE_FORMAT_ERROR_MARKERS):
+                    self._use_json_object = True
+                    # json_object 要求提示词中包含 "json"，降级后重建消息。
+                    return self._request(self._json_object_messages(messages), headers)
+            raise
+
+    def _request(self, messages: list[dict], headers: dict) -> dict:
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": 0,
+        }
+        if self._use_json_object:
+            payload["response_format"] = {"type": "json_object"}
+        else:
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "claim_extraction_result",
+                    "schema": CLAIM_EXTRACTION_JSON_SCHEMA,
+                    "strict": True,
+                },
+            }
+        if self.disable_thinking:
+            # DashScope 兼容模式的 extra_body 参数：关闭思考模式，省 token 提速。
+            payload["enable_thinking"] = False
+        with httpx.Client(timeout=self.timeout_seconds) as client:
+            response = client.post(f"{self.base_url}/chat/completions", json=payload, headers=headers)
+            response.raise_for_status()
+            return response.json()
+
+    def _build_messages(self, *, prompt: str, evidence_payload: list[dict]) -> list[dict]:
+        system_content = (
+            "You extract concise, verifiable competitive-research claims from evidence. "
+            "Every claim must cite exactly one supplied evidence_id. "
+            "Do not invent facts that are not present in the evidence."
+        )
+        return [
+            {"role": "system", "content": system_content},
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {"research_prompt": prompt, "evidence": evidence_payload}, ensure_ascii=False
+                ),
+            },
+        ]
+
+    def _json_object_messages(self, messages: list[dict]) -> list[dict]:
+        updated = list(messages)
+        updated[0] = {
+            "role": "system",
+            "content": f"{updated[0]['content']} {JSON_OBJECT_OUTPUT_CONTRACT}",
+        }
+        return updated
 
 
 def parse_claim_extraction_content(content: str) -> ClaimExtractionResult:
@@ -212,4 +272,5 @@ def build_llm_extractor(settings: Settings) -> ClaimExtractionLLM | None:
         base_url=settings.llm_base_url,
         model=settings.llm_model,
         timeout_seconds=settings.llm_timeout_seconds,
+        disable_thinking=settings.llm_disable_thinking,
     )

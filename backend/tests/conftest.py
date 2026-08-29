@@ -19,3 +19,12 @@ os.environ["TASK_MODE"] = "inline"
 os.environ["ELASTICSEARCH_URL"] = "http://localhost:9200"
 os.environ.setdefault("TAVILY_API_KEY", "")
 os.environ.setdefault("LLM_API_KEY", "")
+# Langfuse 同理：.env 指向虚拟机（192.168.150.101:3000），虚拟机不在线时
+# 每次 trace 上报都要等待 TCP 连接超时（约 21s），导致测试极慢。
+# 清空三要素让 observability.get_langfuse() 走 no-op 路径（见 app/services/observability.py）。
+os.environ["LANGFUSE_PUBLIC_KEY"] = ""
+os.environ["LANGFUSE_SECRET_KEY"] = ""
+os.environ["LANGFUSE_HOST"] = ""
+# MinIO 同理：指向本机未监听端口让连接立即失败（ECONNREFUSED），
+# FallbackArtifactStorage 立即降级到本地存储，避免每次读写白等 10s 超时。
+os.environ["MINIO_ENDPOINT"] = "http://localhost:9000"

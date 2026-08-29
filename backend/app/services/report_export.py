@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from hashlib import sha256
 from html import escape as html_escape
 from io import BytesIO
-import re
-from hashlib import sha256
 from typing import Iterable
 
 from docx import Document
@@ -17,7 +17,6 @@ from reportlab.lib.units import mm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
 from app.schemas import ReportOut, ReportSectionEvidenceOut
-from app.services.storage.artifacts import StoredArtifact
 
 
 @dataclass(frozen=True)
@@ -36,7 +35,14 @@ def normalize_export_format(value: str | None) -> str:
 
 
 def build_report_markdown(report: ReportOut) -> str:
-    return "\n\n".join(f"## {section.title}\n\n{section.content_markdown}" for section in sorted(report.sections, key=lambda item: item.order_no))
+    parts: list[str] = []
+    for section in sorted(report.sections, key=lambda item: item.order_no):
+        part = f"## {section.title}\n\n{section.content_markdown}"
+        if section.evidence:
+            lines = "\n".join(f"- {format_evidence_line(evidence)}" for evidence in section.evidence)
+            part += f"\n\n### 引用来源\n\n{lines}"
+        parts.append(part)
+    return "\n\n".join(parts)
 
 
 def build_report_export_filename(report: ReportOut, *, format: str, report_title: str | None = None) -> str:
@@ -221,7 +227,16 @@ def format_evidence_line(evidence: ReportSectionEvidenceOut) -> str:
     relation = evidence.relation or "supports"
     claim_count = len(evidence.claim_ids)
     claim_label = "Claim" if claim_count == 1 else "Claims"
-    return f"{evidence.id} | {source_label} | {round(evidence.quality_score * 100)}% | {relation} | {claim_count} {claim_label}"
+    reliability = ""
+    if evidence.reliability_score is not None:
+        level = evidence.reliability_level or "medium"
+        reliability = f" | 可靠性 {round(evidence.reliability_score * 100)}%/{level}"
+    snapshot = " | 快照可用" if evidence.snapshot_available else ""
+    url = f" | {evidence.source_url}" if evidence.source_url else ""
+    return (
+        f"{evidence.id} | {source_label} | {round(evidence.quality_score * 100)}%"
+        f"{reliability} | {relation} | {claim_count} {claim_label}{snapshot}{url}"
+    )
 
 
 def sanitize_filename_component(value: str) -> str:

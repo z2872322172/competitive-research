@@ -39,6 +39,16 @@ def init_db() -> None:
 
 
 def apply_mvp_schema_upgrades(bind: Engine | Connection | None = None) -> None:
+    """补齐旧库缺失的列/回填/唯一索引（幂等，schema 演进的共享单一实现）。
+
+    本函数同时被两条路径复用，禁止在它之外再新增并行迁移逻辑：
+    - init_db()：dev/test 启动时随 create_all 一起执行；
+    - Alembic baseline 迁移 migrations/versions/20260826_0002（stage6 mysql baseline）。
+
+    约定：models.py 新增/修改字段时，必须同步更新本函数（含回填与唯一索引），
+    保证 fresh 库（create_all）与旧库升级两条路径的 schema 一致；
+    待迁移节奏稳定后，再逐步改为逐变更的 Alembic revision。
+    """
     target = bind or engine
     inspector = inspect(target)
     table_names = inspector.get_table_names()

@@ -15,10 +15,10 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_DIR))
 
 from sqlalchemy.dialects import mysql  # noqa: E402
-from sqlalchemy.schema import CreateIndex, CreateTable, DropTable  # noqa: E402
+from sqlalchemy.schema import CreateIndex, CreateTable  # noqa: E402
 
-from app.db import Base  # noqa: E402
 from app import models  # noqa: E402, F401  (register models on Base.metadata)
+from app.db import Base  # noqa: E402
 
 DATABASE_NAME = "verda"
 OUTPUT_PATH = BACKEND_DIR / "scripts" / "init_mysql_schema.sql"

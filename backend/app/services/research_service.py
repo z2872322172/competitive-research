@@ -17,31 +17,39 @@ from app.schemas import (
     CompetitorProfileOut,
     CompetitorSourceUrl,
     EvidenceOut,
-    ResearchEventOut,
-    ResearchTaskCreate,
-    ResearchTaskOut,
     ReportOut,
     ReportSectionEvidenceOut,
     ReportSectionOut,
+    ResearchEventOut,
+    ResearchTaskCreate,
+    ResearchTaskOut,
     SourceOut,
     SourceSnapshotOut,
     TaskDetailOut,
     TaskRunOut,
 )
+from app.services import claim_verification
 from app.services.analysis.claim_extractor import extract_and_store_claims
+from app.services.claim_quality import analyze_claim_conflict
 from app.services.collection import (
     CollectionSummary,
     collect_research_evidence,
     create_claim_report,
-    discover_research_sources,
-    extract_research_evidence,
-    fetch_research_sources,
-    parse_research_sources,
+    discover_research_sources,  # noqa: F401  (re-export：research_graph/tests 经 research_service 访问)
+    extract_research_evidence,  # noqa: F401
+    fetch_research_sources,  # noqa: F401
+    parse_research_sources,  # noqa: F401
 )
 from app.services.parsing.html_parser import parse_html
-from app.services.storage.artifacts import build_artifact_storage
 from app.services.reporting import build_section_evidence_snapshots
-
+from app.services.source_quality import score_source_reliability
+from app.services.storage.artifacts import build_artifact_storage
+from app.state_machine import (  # noqa: F401  (re-export：集中状态机，tests 经此访问)
+    ACTIVE_RUN_STATUSES,
+    TASK_TRANSITIONS,
+    transition_task,
+    transition_run,
+)
 
 STAGES = [
     ("planning.started", "plan_research", "已解析研究目标，生成竞品、维度和来源策略。"),
@@ -53,29 +61,6 @@ STAGES = [
     ("report.created", "generate_report", "已生成带引用的 Markdown 报告草稿。"),
 ]
 
-TASK_TRANSITIONS: dict[str, set[str]] = {
-    models.TaskStatus.draft.value: {models.TaskStatus.confirmed.value, models.TaskStatus.canceled.value},
-    models.TaskStatus.confirmed.value: {models.TaskStatus.queued.value, models.TaskStatus.canceled.value},
-    models.TaskStatus.queued.value: {models.TaskStatus.running.value, models.TaskStatus.failed.value, models.TaskStatus.canceled.value},
-    models.TaskStatus.running.value: {
-        models.TaskStatus.waiting_review.value,
-        models.TaskStatus.completed.value,
-        models.TaskStatus.failed.value,
-        models.TaskStatus.canceled.value,
-    },
-    models.TaskStatus.waiting_review.value: {
-        models.TaskStatus.queued.value,
-        models.TaskStatus.completed.value,
-        models.TaskStatus.running.value,
-        models.TaskStatus.failed.value,
-        models.TaskStatus.canceled.value,
-    },
-    models.TaskStatus.failed.value: {models.TaskStatus.queued.value},
-    models.TaskStatus.completed.value: {models.TaskStatus.queued.value},
-    models.TaskStatus.canceled.value: {models.TaskStatus.queued.value},
-}
-
-ACTIVE_RUN_STATUSES = {models.RunStatus.queued.value, models.RunStatus.running.value}
 REPORT_MAX_ATTEMPTS = 3
 RISKY_CLAIM_STATUSES = {
     models.ClaimStatus.conflict.value,
@@ -151,6 +136,9 @@ def create_task(db: Session, payload: ResearchTaskCreate) -> models.ResearchTask
         "report_depth": payload.report_depth,
         "time_range": payload.time_range,
         "output_format": payload.output_format,
+        "clarification_answers": payload.clarification_answers,
+        "research_weights": payload.research_weights,
+        "assumptions": payload.assumptions,
         "budget": {
             "max_search_rounds": 3,
             "max_candidate_sources": 60,
@@ -229,28 +217,6 @@ def reuse_competitor_profile_sources(
     return merged_preferences, reused_profiles
 
 
-def transition_task(task: models.ResearchTask, target_status: models.TaskStatus, *, reason: str | None = None) -> None:
-    current_status = task.status
-    next_status = target_status.value
-    if current_status == next_status:
-        return
-    if next_status not in TASK_TRANSITIONS.get(current_status, set()):
-        raise ValueError(f"invalid_task_transition:{current_status}:{next_status}")
-
-    now = models.utc_now()
-    task.status = next_status
-    if target_status == models.TaskStatus.confirmed:
-        task.confirmed_at = now
-    if target_status == models.TaskStatus.queued:
-        task.queued_at = now
-        task.completed_at = None
-        task.failure_reason = None
-    if target_status == models.TaskStatus.completed:
-        task.completed_at = now
-    if target_status == models.TaskStatus.failed:
-        task.failure_reason = reason
-
-
 def get_latest_run(db: Session, task_id: int) -> models.TaskRun | None:
     # 用 (col IS NULL) 前置排序替代 NULLS LAST：MySQL 不支持 NULLS LAST 子句，
     # 该写法在 MySQL 与 SQLite 下语义一致（NULL 值均排在最后）。
@@ -323,7 +289,7 @@ def prepare_failed_run_resume(db: Session, task_id: int) -> models.TaskRun:
         raise ValueError("resume_checkpoint_not_found")
 
     transition_task(task, models.TaskStatus.queued)
-    latest_run.status = models.RunStatus.queued.value
+    transition_run(latest_run, models.RunStatus.queued)
     latest_run.current_stage = checkpoint.resume_node
     latest_run.error_message = None
     latest_run.finished_at = None
@@ -394,7 +360,7 @@ def run_linear_research_flow(db: Session, run_id: int, delay_seconds: float = 0.
     if task is None:
         raise ValueError("task_not_found")
 
-    run.status = models.RunStatus.running.value
+    transition_run(run, models.RunStatus.running)
     run.current_stage = "plan_research"
     run.started_at = models.utc_now()
     transition_task(task, models.TaskStatus.running)
@@ -440,7 +406,7 @@ def run_linear_research_flow(db: Session, run_id: int, delay_seconds: float = 0.
             if delay_seconds:
                 sleep(delay_seconds)
 
-        seed_demo_research_objects(db, task.id)
+        seed_demo_research_objects(db, task.id, run_id=run.id)
 
         for event_type, stage, message in STAGES[3:]:
             run.current_stage = stage
@@ -448,7 +414,7 @@ def run_linear_research_flow(db: Session, run_id: int, delay_seconds: float = 0.
             if delay_seconds:
                 sleep(delay_seconds)
 
-    run.status = models.RunStatus.waiting_review.value
+    transition_run(run, models.RunStatus.waiting_review)
     run.current_stage = "review_gate"
     transition_task(task, models.TaskStatus.waiting_review)
     run.finished_at = models.utc_now()
@@ -470,13 +436,14 @@ def generate_report_with_retry(
     for attempt in range(1, REPORT_MAX_ATTEMPTS + 1):
         try:
             if not force_new_version and generation_reason == "initial_workflow":
-                return create_claim_report(db, task, summary)
+                return create_claim_report(db, task, summary, run_id=run.id)
             return create_claim_report(
                 db,
                 task,
                 summary,
                 force_new_version=force_new_version,
                 generation_reason=generation_reason,
+                run_id=run.id,
             )
         except Exception as exc:
             db.rollback()
@@ -513,7 +480,7 @@ def build_review_report_summary(db: Session, task_id: int) -> CollectionSummary:
 
 
 def regenerate_report_after_review(db: Session, *, task: models.ResearchTask, run: models.TaskRun) -> models.Report | None:
-    run.status = models.RunStatus.running.value
+    transition_run(run, models.RunStatus.running)
     run.current_stage = "generate_report"
     run.finished_at = None
     transition_task(task, models.TaskStatus.running)
@@ -557,50 +524,40 @@ def load_included_claim_ids(db: Session, task_id: int) -> list[int]:
 
 
 def verify_claims(db: Session, *, task: models.ResearchTask) -> dict[str, int | float]:
-    claims = (
-        db.execute(
-            select(models.Claim)
-            .where(models.Claim.task_id == task.id)
-            .options(selectinload(models.Claim.evidence_links))
-            .order_by(models.Claim.created_at.asc())
-        )
-        .scalars()
-        .all()
-    )
+    """多源交叉验证（方案 5.6）：逐 Claim 计算支持/冲突证据、来源多样性与置信分。"""
+    summary = claim_verification.cross_validate_claims(db, task=task)
+    claim_results = summary.pop("claim_results", [])
 
-    claims_without_evidence = 0
-    low_confidence_claims = 0
-    conflict_claims = 0
-    cited_claims = 0
-    for claim in claims:
-        if claim.evidence_links:
-            cited_claims += 1
-            claim.evidence_coverage = max(claim.evidence_coverage, 1.0)
-        else:
-            claims_without_evidence += 1
-            claim.status = models.ClaimStatus.needs_evidence.value
-            claim.confidence = "low"
-            claim.confidence_score = min(claim.confidence_score, 0.4)
-            claim.evidence_coverage = 0.0
-
-        if claim.confidence_score < 0.55:
-            low_confidence_claims += 1
-            if claim.status == models.ClaimStatus.verified.value:
-                claim.status = models.ClaimStatus.low_confidence.value
-
-        if claim.status == models.ClaimStatus.conflict.value:
-            conflict_claims += 1
-
-    db.commit()
-    citation_coverage = round(cited_claims / len(claims), 4) if claims else 0.0
-    return {
-        "claims_created": len(claims),
-        "cited_claims": cited_claims,
-        "claims_without_evidence": claims_without_evidence,
-        "low_confidence_claims": low_confidence_claims,
-        "conflict_claims": conflict_claims,
-        "citation_coverage": citation_coverage,
-    }
+    run = get_latest_run(db, task.id)
+    if run is not None:
+        for item in claim_results:
+            if item.get("conflict_summary") is not None:
+                append_event(
+                    db,
+                    run_id=run.id,
+                    event_type="claim.conflict_detected",
+                    stage="verify_claims",
+                    message=(
+                        f"Claim {item['claim_id']}（{item['subject']}）检测到证据冲突，"
+                        f"调和策略：{item.get('resolution_strategy') or 'mark_as_unresolved'}。"
+                    ),
+                    payload=item,
+                    severity="warning",
+                )
+            elif item.get("changed") and item["status"] in {models.ClaimStatus.verified.value, models.ClaimStatus.corroborated.value}:
+                append_event(
+                    db,
+                    run_id=run.id,
+                    event_type="claim.verified",
+                    stage="verify_claims",
+                    message=(
+                        f"Claim {item['claim_id']}（{item['subject']}）完成多源交叉验证："
+                        f"{item['status']}，置信度 {round(item['confidence_score'] * 100)}%，"
+                        f"支持来源 {item['support_source_count']} 个。"
+                    ),
+                    payload=item,
+                )
+    return summary
 
 
 def mark_run_failed(db: Session, run_id: int, message: str) -> models.TaskRun:
@@ -608,7 +565,7 @@ def mark_run_failed(db: Session, run_id: int, message: str) -> models.TaskRun:
     if run is None:
         raise ValueError("run_not_found")
     task = db.get(models.ResearchTask, run.task_id)
-    run.status = models.RunStatus.failed.value
+    transition_run(run, models.RunStatus.failed)
     run.current_stage = "failed"
     run.error_message = message
     run.finished_at = models.utc_now()
@@ -632,7 +589,7 @@ def cancel_research_task(db: Session, task_id: int, *, reason: str = "canceled b
         raise ValueError("task_run_not_found")
 
     if latest_run.status != models.RunStatus.canceled.value:
-        latest_run.status = models.RunStatus.canceled.value
+        transition_run(latest_run, models.RunStatus.canceled)
         latest_run.current_stage = "canceled"
         latest_run.error_message = reason
         latest_run.finished_at = models.utc_now()
@@ -678,7 +635,7 @@ def sync_task_review_status(db: Session, task_id: int) -> None:
         regenerate_report_after_review(db, task=task, run=latest_run)
     transition_task(task, models.TaskStatus.completed)
     if latest_run:
-        latest_run.status = models.RunStatus.completed.value
+        transition_run(latest_run, models.RunStatus.completed)
         latest_run.current_stage = "completed"
         latest_run.finished_at = latest_run.finished_at or models.utc_now()
         append_event(db, run_id=latest_run.id, event_type="task.completed", stage="completed", message="风险结论已完成审阅，报告可以交付。")
@@ -744,7 +701,7 @@ def write_demo_source_snapshot(db: Session, task_id: int, source_id: int, title:
     )
 
 
-def seed_generic_demo_research_objects(db: Session, task: models.ResearchTask) -> None:
+def seed_generic_demo_research_objects(db: Session, task: models.ResearchTask, *, run_id: int | None = None) -> None:
     scope = decode_json(task.scope_json)
     research_question = str(scope.get("research_question") or task.title).strip()
     source_rows = [
@@ -870,45 +827,88 @@ def seed_generic_demo_research_objects(db: Session, task: models.ResearchTask) -
         },
     }
 
-    report = models.Report(
-        task_id=task.id,
-        version=1,
-        status="draft",
+    upsert_seeded_report_sections(
+        db,
+        task.id,
+        run_id=run_id,
         citation_coverage=1.0,
-        input_snapshot_json=encode_json(report_snapshot),
-        generated_at=models.utc_now(),
-    )
-    db.add(report)
-    db.flush()
-    db.add_all(
-        [
-            models.ReportSection(
-                report_id=report.id,
-                section_type="executive_summary",
-                title="Executive Summary",
-                content_markdown=f"This generic deep research draft is grounded in {len(source_rows)} seed sources and {len(claims)} traceable claims for: {research_question}.",
-                order_no=1,
+        report_snapshot=report_snapshot,
+        sections=[
+            (
+                "executive_summary",
+                "Executive Summary",
+                f"This generic deep research draft is grounded in {len(source_rows)} seed sources and {len(claims)} traceable claims for: {research_question}.",
+                1,
             ),
-            models.ReportSection(
-                report_id=report.id,
-                section_type="key_claims",
-                title="Key Claims",
-                content_markdown="\n".join(f"- {claim.display_text}" for claim in claims),
-                order_no=2,
+            (
+                "key_claims",
+                "Key Claims",
+                "\n".join(f"- {claim.display_text}" for claim in claims),
+                2,
             ),
-        ]
+        ],
     )
+
+
+def upsert_seeded_report_sections(
+    db: Session,
+    task_id: int,
+    *,
+    run_id: int | None = None,
+    citation_coverage: float,
+    report_snapshot: dict[str, Any],
+    sections: list[tuple[str, str, str, int]],
+) -> models.Report:
+    """Demo seed 报告写入：复用运行草稿（v1）或首次创建，逐章节 upsert 并发 report.section_updated 事件。"""
+    from app.services.reporting import append_report_section_event, latest_task_report, upsert_report_section
+
+    report = latest_task_report(db, task_id)
+    if report is None:
+        report = models.Report(
+            task_id=task_id,
+            version=1,
+            status="draft",
+            citation_coverage=citation_coverage,
+            input_snapshot_json=encode_json(report_snapshot),
+            generated_at=models.utc_now(),
+        )
+        db.add(report)
+        db.flush()
+    else:
+        report.citation_coverage = citation_coverage
+        report.input_snapshot_json = encode_json(report_snapshot)
+        report.generated_at = models.utc_now()
+        db.flush()
+
+    for section_type, title, content_markdown, order_no in sections:
+        upsert_report_section(
+            db,
+            report,
+            section_type=section_type,
+            title=title,
+            content_markdown=content_markdown,
+            order_no=order_no,
+        )
+        append_report_section_event(
+            db,
+            run_id=run_id,
+            report=report,
+            section_type=section_type,
+            title=title,
+            stage="extract_evidence",
+        )
     db.commit()
+    return report
 
 
-def seed_demo_research_objects(db: Session, task_id: int) -> None:
+def seed_demo_research_objects(db: Session, task_id: int, *, run_id: int | None = None) -> None:
     existing = db.execute(select(models.Source.id).where(models.Source.task_id == task_id)).first()
     if existing:
         return
 
     task = db.get(models.ResearchTask, task_id)
     if task is not None and is_deep_research_task(task):
-        seed_generic_demo_research_objects(db, task)
+        seed_generic_demo_research_objects(db, task, run_id=run_id)
         return
 
     source_rows = [
@@ -1036,44 +1036,36 @@ def seed_demo_research_objects(db: Session, task_id: int) -> None:
         },
     }
 
-    report = models.Report(
-        task_id=task_id,
-        version=1,
-        status="draft",
+    upsert_seeded_report_sections(
+        db,
+        task_id,
+        run_id=run_id,
         citation_coverage=0.94,
-        input_snapshot_json=encode_json(report_snapshot),
-        generated_at=models.utc_now(),
-    )
-    db.add(report)
-    db.flush()
-    db.add_all(
-        [
-            models.ReportSection(
-                report_id=report.id,
-                section_type="executive_summary",
-                title="执行摘要",
-                content_markdown=(
+        report_snapshot=report_snapshot,
+        sections=[
+            (
+                "executive_summary",
+                "执行摘要",
+                (
                     "Cursor 在企业协作和隐私控制方面证据更充分 [S1]。"
                     "Trae 企业版公开定价暂未检索到可验证来源，应标记为未披露。"
                 ),
-                order_no=1,
+                1,
             ),
-            models.ReportSection(
-                report_id=report.id,
-                section_type="comparison",
-                title="竞品对比",
-                content_markdown=(
+            (
+                "comparison",
+                "竞品对比",
+                (
                     "| 产品 | 结论 | 状态 |\n"
                     "|---|---|---|\n"
                     "| Cursor | 企业控制能力较成熟 | 已验证 |\n"
                     "| Trae | 企业版价格未公开 | 未披露 |\n"
                     "| Windsurf | Pro 定价存在冲突 | 待审阅 |\n"
                 ),
-                order_no=2,
+                2,
             ),
-        ]
+        ],
     )
-    db.commit()
 
 
 def serialize_task(task: models.ResearchTask) -> ResearchTaskOut:
@@ -1144,6 +1136,7 @@ def serialize_source(source: models.Source) -> SourceOut:
         content_hash=source.content_hash,
         index_status=source.index_status,
         is_primary=source.is_primary,
+        reliability=score_source_reliability(source),
     )
 
 
@@ -1221,7 +1214,10 @@ def serialize_competitor_profile(db: Session, profile: models.CompetitorProfile)
         db.execute(
             select(models.Claim.id).where(
                 models.Claim.subject == profile.name,
-                models.Claim.status == models.ClaimStatus.verified.value,
+                # 多源印证（corroborated）是更强的"已验证"，一并计入（方案阶段三）
+                models.Claim.status.in_(
+                    (models.ClaimStatus.verified.value, models.ClaimStatus.corroborated.value)
+                ),
             )
         ).all()
     )
@@ -1367,6 +1363,15 @@ def serialize_claim(claim: models.Claim) -> ClaimOut:
         include_in_report=claim.include_in_report,
         evidence_coverage=claim.evidence_coverage,
         evidence_ids=[link.evidence_id for link in claim.evidence_links],
+        evidence_links=[
+            {
+                "evidence_id": link.evidence_id,
+                "relation": link.relation,
+                "weight": link.weight,
+            }
+            for link in claim.evidence_links
+        ],
+        conflict_analysis=analyze_claim_conflict(claim),
         review_decision=latest_review.decision if latest_review else None,
         review_reason=latest_review.reason if latest_review else None,
         reviewed_at=latest_review.created_at if latest_review else None,
@@ -1411,7 +1416,7 @@ def serialize_report(report: models.Report) -> ReportOut:
 
 
 def regenerate_report_manually(db: Session, *, task: models.ResearchTask, run: models.TaskRun) -> models.Report | None:
-    run.status = models.RunStatus.running.value
+    transition_run(run, models.RunStatus.running)
     run.current_stage = "generate_report"
     run.finished_at = None
     if task.status != models.TaskStatus.completed.value:
@@ -1444,7 +1449,7 @@ def regenerate_report_manually(db: Session, *, task: models.ResearchTask, run: m
         )
 
     transition_task(task, models.TaskStatus.completed)
-    run.status = models.RunStatus.completed.value
+    transition_run(run, models.RunStatus.completed)
     run.current_stage = "completed"
     run.finished_at = models.utc_now()
     append_event(db, run_id=run.id, event_type="task.completed", stage="completed", message="报告已重新生成。")
@@ -1469,6 +1474,10 @@ def get_task_detail(
             selectinload(models.ResearchTask.runs),
             selectinload(models.ResearchTask.sources),
             selectinload(models.ResearchTask.claims).selectinload(models.Claim.evidence_links),
+            selectinload(models.ResearchTask.claims)
+            .selectinload(models.Claim.evidence_links)
+            .selectinload(models.ClaimEvidence.evidence)
+            .selectinload(models.Evidence.source),
             selectinload(models.ResearchTask.claims).selectinload(models.Claim.review_decisions),
             selectinload(models.ResearchTask.reports).selectinload(models.Report.sections),
         )

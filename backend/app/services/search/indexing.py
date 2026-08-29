@@ -1,6 +1,5 @@
 import json
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any
 from urllib.parse import urlparse
 
@@ -48,8 +47,6 @@ class ElasticsearchIndexer:
             return SearchIndexSyncSummary(sources_indexed=0, evidence_indexed=0, failed_sources=1)
 
     def rebuild_task(self, db: Session, task_id: int) -> SearchIndexSyncSummary:
-        task = db.get(models.ResearchTask, task_id)
-        scope = decode_scope(task.scope_json if task else None)
         sources = (
             db.execute(
                 select(models.Source)
@@ -62,8 +59,6 @@ class ElasticsearchIndexer:
         )
         summary = SearchIndexSyncSummary()
         for source in sources:
-            source_competitors = scope["competitors"]
-            source_dimensions = scope["dimensions"]
             result = self.sync_source_bundle(db, source)
             summary = SearchIndexSyncSummary(
                 sources_indexed=summary.sources_indexed + result.sources_indexed,

@@ -6,7 +6,6 @@ from urllib.parse import quote_plus
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
 PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
     "dev": {
         "database_url": "sqlite:///./verda_dev.db",
@@ -167,6 +166,13 @@ class Settings(BaseSettings):
     llm_model: str = "chat-latest"
     llm_timeout_seconds: float = Field(default=30.0, gt=0)
     llm_max_evidence_items: int = Field(default=8, ge=1, le=30)
+    # 阿里云百炼（DashScope）等推理模型开关：true 时在请求体加 enable_thinking=false，
+    # 关闭思考模式以省 token / 提速（OpenAI 等不支持该参数的提供商保持 false 即可）。
+    llm_disable_thinking: bool = False
+    # 研究计划追问器：heuristic 保持离线稳定；auto/llm 会在配置 Key 后优先调用 OpenAI 兼容模型。
+    research_planner_provider: str = Field(default="heuristic")
+    research_planner_model: str | None = None
+    research_planner_max_questions: int = Field(default=5, ge=1, le=8)
 
     # Langfuse 全链路可观测：三项齐配才启用，否则全部 no-op（离线运行不受影响）。
     langfuse_public_key: str = ""

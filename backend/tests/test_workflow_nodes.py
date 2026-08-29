@@ -1,28 +1,16 @@
 """工作流节点测试（清单 703）：research_graph 节点级行为——节点生命周期事件/成功与失败 checkpoint/断点恢复/节点重试边界/review 门控/取消与独立失败边界。从 test_api_contract.py 按模块拆出。"""
 
-from fastapi.testclient import TestClient
-import hashlib
-import json
 import pytest
-from sqlalchemy.exc import IntegrityError
 
 from app import models
 from app.config import Settings, get_settings
 from app.db import SessionLocal, init_db
-from app.main import app
-from app.services import collection
-from app.services.analysis import claim_extractor, llm
+from app.services import collection, research_service
+from app.services.analysis import claim_extractor
 from app.services.fetching import fetcher as fetcher_module
 from app.services.fetching.fetcher import FetchResult
-from app.services.fetching.robots import RobotsDecision
 from app.services.parsing import html_parser
-from app.services import research_service
-from app.services.search.adapters import build_search_adapter, classify_source_type
 from app.services.search.base import SearchResult
-from app.services.search import indexing as search_indexing
-from app.services.social.adapters import PublicSocialUrlAdapter
-from app.services.storage import artifacts as artifact_storage
-from app.services.storage.artifacts import LocalArtifactStorage
 
 
 @pytest.fixture(autouse=True)
@@ -63,12 +51,17 @@ def test_stage_five_workflow_entry_runs_complete_research_flow():
             if not event.type.startswith("node.")
         ]
         assert domain_event_types == [
+            "report.section_updated",
             "planning.started",
             "search.skipped",
             "search.started",
             "source.found",
+            "report.section_updated",
+            "report.section_updated",
             "evidence.created",
             "claim.created",
+            "claim.verified",
+            "claim.conflict_detected",
             "review.required",
             "report.created",
         ]

@@ -10,7 +10,6 @@ from app.config import Settings
 from app.services.analysis.llm import LLMUnavailable, build_llm_extractor
 from app.services.analysis.schemas import ClaimExtractionResult, ExtractedClaim
 
-
 PRICING_TERMS = {"price", "pricing", "plan", "subscription", "seat", "billing", "定价", "价格", "套餐", "订阅"}
 FEATURE_TERMS = {"feature", "control", "admin", "privacy", "integration", "workflow", "功能", "控制", "管理", "集成", "隐私"}
 POSITIONING_TERMS = {"position", "market", "enterprise", "team", "developer", "定位", "市场", "企业", "团队", "开发者"}

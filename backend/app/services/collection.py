@@ -18,13 +18,14 @@ from app.services.fetching.rate_limit import DomainRateLimiter
 from app.services.fetching.robots import RobotsPolicyChecker
 from app.services.parsing.evidence_extractor import build_keywords, extract_evidence
 from app.services.parsing.html_parser import ParsedPage, parse_html
-from app.services.reporting import create_claim_report
+
+# re-export：research_service 直接从本模块导入 create_claim_report，勿删。
+from app.services.reporting import create_claim_report  # noqa: F401
 from app.services.search.adapters import build_search_adapter, extract_urls
-from app.services.search.indexing import ElasticsearchIndexer
 from app.services.search.base import SearchProviderUnavailable, SearchResult
+from app.services.search.indexing import ElasticsearchIndexer
 from app.services.social.adapters import build_public_social_metadata, build_social_listening_adapter, split_social_urls
 from app.services.storage.artifacts import build_artifact_storage
-
 
 EventWriter = Callable[[str, str, str, dict[str, Any] | None], None]
 
@@ -566,34 +567,43 @@ def build_query(prompt: str, scope: dict[str, Any]) -> str:
     return " ".join(part for part in [prompt, competitors, dimensions] if part).strip()
 
 
-def create_collection_report(db: Session, task: models.ResearchTask, summary: CollectionSummary) -> None:
-    existing = db.execute(select(models.Report.id).where(models.Report.task_id == task.id)).first()
-    if existing:
-        return
-    report = models.Report(
-        task_id=task.id,
-        version=1,
-        status="draft",
-        citation_coverage=1.0 if summary.evidence_created else 0.0,
-        input_snapshot_json=task.scope_json,
-        generated_at=models.utc_now(),
+def create_collection_report(db: Session, task: models.ResearchTask, summary: CollectionSummary, *, run_id: int | None = None) -> None:
+    from app.services.reporting import (
+        FINAL_SECTION_ORDER,
+        append_report_section_event,
+        ensure_run_draft_report,
+        is_unfinalized_run_draft,
+        upsert_report_section,
     )
-    db.add(report)
-    db.flush()
-    db.add(
-        models.ReportSection(
-            report_id=report.id,
-            section_type="collection_summary",
-            title="真实采集摘要",
-            content_markdown=(
-                f"本轮通过 {summary.provider} 发现 {summary.source_candidates} 个候选来源，"
-                f"成功入库 {summary.sources_created} 个 Source，抽取 {summary.evidence_created} 条 Evidence。"
-                f"跳过低质量来源 {summary.low_quality_sources} 个，robots 阻止 {summary.robots_blocked} 个。"
-            ),
-            order_no=1,
-        )
+
+    report = ensure_run_draft_report(db, task, run_id=run_id, stage="extract_evidence")
+    if report is None or not is_unfinalized_run_draft(db, report):
+        return
+    upsert_report_section(
+        db,
+        report,
+        section_type="collection_summary",
+        title="采集摘要",
+        content_markdown=render_real_collection_summary(summary),
+        order_no=FINAL_SECTION_ORDER["collection_summary"],
+    )
+    append_report_section_event(
+        db,
+        run_id=run_id,
+        report=report,
+        section_type="collection_summary",
+        title="采集摘要",
+        stage="extract_evidence",
     )
     db.commit()
+
+
+def render_real_collection_summary(summary: CollectionSummary) -> str:
+    return (
+        f"本轮通过 {summary.provider} 发现 {summary.source_candidates} 个候选来源，"
+        f"成功入库 {summary.sources_created} 个 Source，抽取 {summary.evidence_created} 条 Evidence。"
+        f"跳过低质量来源 {summary.low_quality_sources} 个，robots 阻止 {summary.robots_blocked} 个。"
+    )
 
 
 def decode_json(value: str | None) -> dict[str, Any]:

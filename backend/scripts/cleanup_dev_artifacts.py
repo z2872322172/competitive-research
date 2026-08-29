@@ -5,7 +5,6 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-
 DEFAULT_ARTIFACT_PATTERNS = (
     ".pytest_cache",
     "verda_dev.db",

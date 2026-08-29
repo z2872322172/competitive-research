@@ -1,0 +1,12 @@
+[tool.ruff]
+line-length = 200
+target-version = "py311"
+extend-exclude = ["migrations"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+# 存量代码（含测试夹具里的长 HTML 行）行宽不一，行宽检查待统一格式化后再启用。
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]

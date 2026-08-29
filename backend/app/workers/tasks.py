@@ -1,8 +1,7 @@
 from app.db import SessionLocal
 from app.services import observability
-from app.workflows.research_graph import run_research_workflow
-from app.workflows.research_graph import latest_success_checkpoint
 from app.workers.celery_app import celery_app
+from app.workflows.research_graph import latest_success_checkpoint, run_research_workflow
 
 
 @celery_app.task(name="research.run", autoretry_for=(Exception,), retry_kwargs={"max_retries": 3})

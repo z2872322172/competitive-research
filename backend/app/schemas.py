@@ -19,6 +19,40 @@ class ResearchTaskCreate(BaseModel):
     report_depth: str = "standard"
     time_range: str = "last_12_months"
     output_format: str = "comprehensive_report"
+    clarification_answers: list[dict[str, Any]] = Field(default_factory=list)
+    research_weights: list[dict[str, Any]] = Field(default_factory=list)
+    assumptions: list[str] = Field(default_factory=list)
+
+
+class ResearchClarifyRequest(BaseModel):
+    prompt: str = Field(min_length=8)
+    workspace_id: str = "default"
+
+
+class ClarificationQuestionOut(BaseModel):
+    key: str
+    label: str
+    question: str
+    reason: str = ""
+    answer_type: Literal["free_text", "single_choice", "multi_choice"] = "free_text"
+    options: list[str] = Field(default_factory=list)
+    required: bool = False
+
+
+class ResearchPlanSuggestionOut(BaseModel):
+    research_question: str
+    detected_domain: str
+    detected_intent: str
+    research_type: Literal["competitive_research", "deep_research"]
+    competitors: list[str]
+    dimensions: list[str]
+    source_preferences: list[str]
+    time_range: str
+    report_depth: str
+    output_format: str
+    questions: list[ClarificationQuestionOut]
+    assumptions: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
 
 
 class ResearchTaskOut(BaseModel):
@@ -69,6 +103,13 @@ class ResearchEventOut(BaseModel):
     created_at: datetime
 
 
+class SourceReliabilityOut(BaseModel):
+    score: float
+    label: Literal["high", "medium", "low"]
+    reasons: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
 class SourceOut(BaseModel):
     id: int
     task_id: int
@@ -86,6 +127,7 @@ class SourceOut(BaseModel):
     content_hash: str
     index_status: str
     is_primary: bool
+    reliability: SourceReliabilityOut | None = None
 
     model_config = {"from_attributes": True}
 
@@ -179,6 +221,28 @@ class EvidenceOut(BaseModel):
     source: SourceOut | None = None
 
 
+class ClaimEvidenceLinkOut(BaseModel):
+    evidence_id: int
+    relation: str
+    weight: float
+
+
+class ClaimConflictAnalysisOut(BaseModel):
+    support_count: int
+    conflict_count: int
+    context_count: int
+    support_score: float
+    conflict_score: float
+    preferred_relation: str
+    needs_more_research: bool
+    recommendation: str
+    rationale: list[str] = Field(default_factory=list)
+    distinct_source_count: int = 0
+    source_diversity_score: float = 0.0
+    max_supporting_source_reliability: float = 0.0
+    confidence_breakdown: dict[str, float] = Field(default_factory=dict)
+
+
 class ClaimOut(BaseModel):
     id: int
     task_id: int
@@ -194,6 +258,8 @@ class ClaimOut(BaseModel):
     include_in_report: bool
     evidence_coverage: float
     evidence_ids: list[int] = Field(default_factory=list)
+    evidence_links: list[ClaimEvidenceLinkOut] = Field(default_factory=list)
+    conflict_analysis: ClaimConflictAnalysisOut | None = None
     review_decision: str | None = None
     review_reason: str | None = None
     reviewed_at: datetime | None = None
@@ -228,8 +294,15 @@ class ReportSectionEvidenceOut(BaseModel):
     source_title: str | None = None
     source_url: str | None = None
     publisher: str | None = None
+    source_type: str | None = None
     quality_score: float
+    reliability_score: float | None = None
+    reliability_level: str | None = None
+    reliability_reasons: list[str] = Field(default_factory=list)
     relation: str | None = None
+    locator: dict[str, Any] = Field(default_factory=dict)
+    snapshot_available: bool = False
+    content_hash: str | None = None
     claim_ids: list[int] = Field(default_factory=list)
 
 

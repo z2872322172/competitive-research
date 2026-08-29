@@ -2,7 +2,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-
 ClaimType = Literal["pricing", "feature", "positioning", "strength", "weakness", "market_update", "general"]
 ClaimStatusValue = Literal["verified", "low_confidence", "undisclosed", "needs_evidence"]
 

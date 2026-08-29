@@ -1,16 +1,17 @@
 from datetime import datetime, timezone
-from time import perf_counter
-from time import sleep
+from time import perf_counter, sleep
 from typing import Any, Callable, TypedDict
 
 from sqlalchemy.orm import Session
 
 from app import models
 from app.config import get_settings
-from app.services import observability
-from app.services import research_service
-from app.services.collection import CollectionSummary, FetchedSource, ParsedSource, SourceDiscovery
+from app.services import observability, reporting, research_service
 from app.services.collection import (
+    CollectionSummary,
+    FetchedSource,
+    ParsedSource,
+    SourceDiscovery,
     deserialize_fetched_sources,
     deserialize_parsed_sources,
     deserialize_source_discovery,
@@ -22,6 +23,7 @@ from app.services.research_service import (
     STAGES,
     append_event,
     decode_json,
+    transition_run,
     transition_task,
 )
 
@@ -266,7 +268,7 @@ def ensure_not_canceled(db: Session, *, run_id: int, node_name: str, input_summa
         return
     task = db.get(models.ResearchTask, run.task_id)
     if run.status == models.RunStatus.canceled.value or (task and task.status == models.TaskStatus.canceled.value):
-        run.status = models.RunStatus.canceled.value
+        transition_run(run, models.RunStatus.canceled)
         run.current_stage = "canceled"
         run.finished_at = run.finished_at or models.utc_now()
         append_node_event(
@@ -463,7 +465,7 @@ def mark_node_failed(db: Session, *, run_id: int, node_name: str, error: str) ->
     if run is None:
         return
     task = db.get(models.ResearchTask, run.task_id)
-    run.status = models.RunStatus.failed.value
+    transition_run(run, models.RunStatus.failed)
     run.current_stage = node_name
     run.error_message = error
     run.finished_at = models.utc_now()
@@ -641,11 +643,12 @@ def build_research_graph(*, db: Session | None = None, delay_seconds: float = 0.
             return {"current_node": "plan_research"}
 
         run, task = get_run_and_task(state)
-        run.status = models.RunStatus.running.value
+        transition_run(run, models.RunStatus.running)
         run.current_stage = "plan_research"
         run.started_at = models.utc_now()
         transition_task(task, models.TaskStatus.running)
         db.commit()
+        reporting.ensure_run_draft_report(db, task, run_id=run.id)
         return build_state_update(next_node="plan_research", run=run)
 
     def plan_research(state: ResearchWorkflowState) -> dict[str, Any]:
@@ -804,7 +807,7 @@ def build_research_graph(*, db: Session | None = None, delay_seconds: float = 0.
         if collection_summary.evidence_created == 0:
             for event_type, stage, message in STAGES[1:3]:
                 write_domain_event(run=run, event_type=event_type, stage=stage, message=message)
-            research_service.seed_demo_research_objects(db, task.id)
+            research_service.seed_demo_research_objects(db, task.id, run_id=run.id)
             summary["demo_seeded"] = True
             summary["sources_created"] = db.query(models.Source).filter_by(task_id=task.id).count()
             summary["evidence_created"] = db.query(models.Evidence).join(models.Source).filter(models.Source.task_id == task.id).count()
@@ -837,8 +840,9 @@ def build_research_graph(*, db: Session | None = None, delay_seconds: float = 0.
 
         run, task = get_run_and_task(state)
         previous_summary = dict(state.get("summary", {}))
-        verification_summary = research_service.verify_claims(db, task=task)
-        previous_summary.update(verification_summary)
+        # 先发 claim.created 再做多源交叉验证，保证事件流语义顺序
+        # （创建 → claim.verified / claim.conflict_detected），前端时间线才不会出现"先验证后创建"。
+        claims_created = db.query(models.Claim).filter_by(task_id=task.id).count()
         run.current_stage = "verify_claims"
         append_event(
             db,
@@ -846,11 +850,14 @@ def build_research_graph(*, db: Session | None = None, delay_seconds: float = 0.
             event_type="claim.created",
             stage="verify_claims",
             message=(
-                f"已从 Evidence 生成 {verification_summary['claims_created']} 条结构化 Claim，"
+                f"已从 Evidence 生成 {claims_created} 条结构化 Claim，"
                 "并完成引用完整性和置信度检查。"
             ),
-            payload={**verification_summary, "extractor": "llm_or_rule_based"},
+            payload={"claims_created": claims_created, "extractor": "llm_or_rule_based"},
         )
+        verification_summary = research_service.verify_claims(db, task=task)
+        previous_summary.update(verification_summary)
+        reporting.update_interim_findings_section(db, task, run_id=run.id)
         return build_state_update(next_node="generate_report", run=run, extra_summary=previous_summary)
 
     def generate_report(state: ResearchWorkflowState) -> dict[str, Any]:
@@ -898,7 +905,7 @@ def build_research_graph(*, db: Session | None = None, delay_seconds: float = 0.
         run, task = get_run_and_task(state)
         unresolved_risky_claims = research_service.get_unresolved_risky_claims(db, task.id)
         if not unresolved_risky_claims:
-            run.status = models.RunStatus.completed.value
+            transition_run(run, models.RunStatus.completed)
             run.current_stage = "completed"
             transition_task(task, models.TaskStatus.completed)
             run.finished_at = models.utc_now()
@@ -913,7 +920,7 @@ def build_research_graph(*, db: Session | None = None, delay_seconds: float = 0.
             db.refresh(run)
             return build_state_update(next_node="review_gate", run=run, extra_summary=dict(state.get("summary", {})))
 
-        run.status = models.RunStatus.waiting_review.value
+        transition_run(run, models.RunStatus.waiting_review)
         run.current_stage = "review_gate"
         has_review_required_event = (
             db.query(models.ResearchEvent.id)
@@ -985,7 +992,7 @@ def prepare_run_for_resume(db: Session, run: models.TaskRun, task: models.Resear
         transition_task(task, models.TaskStatus.queued)
     if task.status == models.TaskStatus.queued.value:
         transition_task(task, models.TaskStatus.running)
-    run.status = models.RunStatus.running.value
+    transition_run(run, models.RunStatus.running)
     run.current_stage = start_node
     run.error_message = None
     run.finished_at = None

@@ -6,7 +6,6 @@ import httpx
 from app.config import Settings
 from app.services.search.base import SearchAdapter, SearchProviderUnavailable, SearchResult
 
-
 URL_PATTERN = re.compile(r"https?://[^\s,，)）\]>\"']+")
 
 SOCIAL_HOSTS = {

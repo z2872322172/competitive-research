@@ -14,9 +14,8 @@ from collections.abc import Sequence
 
 from alembic import op
 
-from app.db import Base, apply_mvp_schema_upgrades
 from app import models  # noqa: F401  (register models on Base.metadata)
-
+from app.db import Base, apply_mvp_schema_upgrades
 
 revision: str = "20260826_0002"
 down_revision: str | None = "20260731_0001"

@@ -1,26 +1,17 @@
-from fastapi.testclient import TestClient
 import hashlib
-import json
+
 import pytest
-from sqlalchemy.exc import IntegrityError
+from fastapi.testclient import TestClient
 
 from app import models
 from app.config import Settings, get_settings
 from app.db import SessionLocal, init_db
 from app.main import app
-from app.services import collection
-from app.services.analysis import claim_extractor, llm
-from app.services.fetching import fetcher as fetcher_module
+from app.services import collection, research_service
+from app.services.analysis import claim_extractor
 from app.services.fetching.fetcher import FetchResult
-from app.services.fetching.robots import RobotsDecision
-from app.services.parsing import html_parser
-from app.services import research_service
-from app.services.search.adapters import build_search_adapter, classify_source_type
-from app.services.search.base import SearchResult
 from app.services.search import indexing as search_indexing
-from app.services.social.adapters import PublicSocialUrlAdapter
-from app.services.storage import artifacts as artifact_storage
-from app.services.storage.artifacts import LocalArtifactStorage
+from app.services.search.base import SearchResult
 
 
 @pytest.fixture(autouse=True)
@@ -962,7 +953,7 @@ def test_cancel_research_task_api_cancels_queued_run():
                     dimensions=["workflow"],
                 ),
             )
-            run = research_service.create_run(db, task.id)
+            research_service.create_run(db, task.id)
         finally:
             db.close()
 

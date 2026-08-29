@@ -1,28 +1,16 @@
 """LangGraph 集成测试（清单 704）：端到端全链路——demo 流程/无 Tavily Key 手动 URL/无 LLM Key 规则降级/后台执行与 review 闭环/报告导出/Celery 入队与自动恢复/rerun 与 resume。从 test_api_contract.py 按模块拆出。"""
 
-from fastapi.testclient import TestClient
-import hashlib
-import json
+
 import pytest
-from sqlalchemy.exc import IntegrityError
+from fastapi.testclient import TestClient
 
 from app import models
-from app.config import Settings, get_settings
+from app.config import get_settings
 from app.db import SessionLocal, init_db
 from app.main import app
-from app.services import collection
-from app.services.analysis import claim_extractor, llm
-from app.services.fetching import fetcher as fetcher_module
+from app.services import collection, research_service
+from app.services.analysis import llm
 from app.services.fetching.fetcher import FetchResult
-from app.services.fetching.robots import RobotsDecision
-from app.services.parsing import html_parser
-from app.services import research_service
-from app.services.search.adapters import build_search_adapter, classify_source_type
-from app.services.search.base import SearchResult
-from app.services.search import indexing as search_indexing
-from app.services.social.adapters import PublicSocialUrlAdapter
-from app.services.storage import artifacts as artifact_storage
-from app.services.storage.artifacts import LocalArtifactStorage
 
 
 @pytest.fixture(autouse=True)
@@ -117,6 +105,7 @@ def test_demo_research_flow():
         assert report["status"] == "draft"
         assert report["citation_coverage"] >= 0
         assert [section["section_type"] for section in report["sections"]] == [
+            "research_plan",
             "executive_summary",
             "comparison",
         ]
@@ -130,21 +119,31 @@ def test_demo_research_flow():
         assert [event["sequence_no"] for event in event_body] == list(range(1, len(event_body) + 1))
         domain_event_body = [event for event in event_body if not event["type"].startswith("node.")]
         assert [event["type"] for event in domain_event_body] == [
+            "report.section_updated",
             "planning.started",
             "search.skipped",
             "search.started",
             "source.found",
+            "report.section_updated",
+            "report.section_updated",
             "evidence.created",
             "claim.created",
+            "claim.verified",
+            "claim.conflict_detected",
             "review.required",
             "report.created",
         ]
         assert [event["stage"] for event in domain_event_body] == [
+            "initialize_run",
             "plan_research",
             "discover_sources",
             "discover_sources",
             "fetch_source",
             "extract_evidence",
+            "extract_evidence",
+            "extract_evidence",
+            "verify_claims",
+            "verify_claims",
             "verify_claims",
             "review_gate",
             "generate_report",
@@ -519,7 +518,7 @@ def test_stage_six_celery_worker_auto_resumes_from_checkpoint(monkeypatch):
     assert captured["resume"] is True
 
 def test_inline_confirm_can_launch_workflow_in_background(monkeypatch):
-    from app.api import routes
+    from app.api import tasks as routes
 
     captured: dict[str, object] = {}
 
@@ -556,7 +555,7 @@ def test_inline_confirm_can_launch_workflow_in_background(monkeypatch):
         assert detail["task"]["current_run_id"] == body["id"]
 
 def test_rerun_and_resume_can_launch_workflow_in_background(monkeypatch):
-    from app.api import routes
+    from app.api import tasks as routes
 
     captured: list[dict[str, object]] = []
 
@@ -642,7 +641,7 @@ def test_rerun_and_resume_can_launch_workflow_in_background(monkeypatch):
         assert captured[-1] == {"run_id": failed_run_id, "resume": True}
 
 def test_stage_five_resume_uses_latest_success_checkpoint(monkeypatch):
-    from app.api import routes
+    from app.api import tasks as routes
     from app.workflows import research_graph
 
     captured: dict[str, object] = {}
